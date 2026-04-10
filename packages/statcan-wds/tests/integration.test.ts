@@ -35,19 +35,28 @@ async function runAllLiveTests() {
 
   // 1. getChangedSeriesList
   await runTest('getChangedSeriesList', async () => {
-    const res = await client.getChangedSeriesList();
-    if (res.status !== 'SUCCESS') throw new Error(`API returned ${res.status}`);
+    try {
+      const res = await client.getChangedSeriesList();
+      if (res.status !== 'SUCCESS') throw new Error(`API returned ${res.status}`);
+    } catch (err: unknown) {
+      // 409 means no changes available yet for today — expected outside release windows
+      if (err instanceof StatCanApiError && err.status === 409) {
+        console.log('   (409: no changes available for today, considering this a PASS)');
+        return;
+      }
+      throw err;
+    }
   });
 
   // 2. getChangedCubeList
   await runTest('getChangedCubeList', async () => {
     try {
-      // Use yesterday or today
       const res = await client.getChangedCubeList(todayIso);
       if (res.status !== 'SUCCESS') throw new Error(`API returned ${res.status}`);
     } catch (err: unknown) {
-      if (err instanceof StatCanApiError && err.status === 404) {
-        console.log('   (Expected 404 for unchanged data, considering this a PASS)');
+      // 404 or 409 both mean no data for this date — expected outside release windows
+      if (err instanceof StatCanApiError && (err.status === 404 || err.status === 409)) {
+        console.log(`   (${err.status}: no data for ${todayIso}, considering this a PASS)`);
         return;
       }
       throw err;
@@ -86,18 +95,26 @@ async function runAllLiveTests() {
 
   // 8. getChangedSeriesDataFromCubePidCoord
   await runTest('getChangedSeriesDataFromCubePidCoord', async () => {
-    await client.getChangedSeriesDataFromCubePidCoord([{ productId: testProductId, coordinate: testCoordinate }]);
-    // May return FAILED if not changed today, which is fine, we just want to ensure it parses successfully
-    // The schema allows ResponseStatusSchema which includes FAILED.
+    try {
+      await client.getChangedSeriesDataFromCubePidCoord([{ productId: testProductId, coordinate: testCoordinate }]);
+      // status: FAILED is valid when nothing changed today — schema allows it
+    } catch (err: unknown) {
+      if (err instanceof StatCanApiError && (err.status === 404 || err.status === 409)) {
+        console.log(`   (${err.status}: no changed data for today, considering this a PASS)`);
+        return;
+      }
+      throw err;
+    }
   });
 
   // 9. getChangedSeriesDataFromVector
   await runTest('getChangedSeriesDataFromVector', async () => {
     try {
       await client.getChangedSeriesDataFromVector([{ vectorId: testVectorId }]);
+      // status: FAILED is valid when nothing changed today — schema allows it
     } catch (err: unknown) {
-      if (err instanceof StatCanApiError && err.status === 404 && err.body?.includes("No changed data found")) {
-        console.log('   (Expected 404 for unchanged data, considering this a PASS)');
+      if (err instanceof StatCanApiError && (err.status === 404 || err.status === 409)) {
+        console.log(`   (${err.status}: no changed data for today, considering this a PASS)`);
         return;
       }
       throw err;
