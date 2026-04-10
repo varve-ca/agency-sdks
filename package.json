@@ -1,0 +1,7 @@
+{
+  "name": "@varve/sdks",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ]
+}

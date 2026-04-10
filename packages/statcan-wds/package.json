@@ -1,0 +1,71 @@
+{
+  "name": "@varve/statcan-wds",
+  "version": "0.1.0",
+  "description": "An isomorphic, Zod-validated TypeScript client for the Statistics Canada Web Data Service (WDS) API.",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/varve-ca/agency-sdks.git",
+    "directory": "packages/statcan-wds"
+  },
+  "homepage": "https://github.com/varve-ca/agency-sdks/tree/main/packages/statcan-wds#readme",
+  "bugs": {
+    "url": "https://github.com/varve-ca/agency-sdks/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "test": "npm run test:unit",
+    "test:unit": "vitest run src",
+    "test:integration": "tsx tests/integration.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "zod": "^3.0.0"
+  },
+  "devDependencies": {
+    "msw": "^2.7.0",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "zod": "^3.24.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "statcan",
+    "statistics",
+    "canada",
+    "wds",
+    "api",
+    "sdk",
+    "typescript",
+    "zod"
+  ],
+  "author": {
+    "name": "Varve",
+    "email": "hi@varve.ca",
+    "url": "https://varve.ca"
+  },
+  "license": "MIT"
+}
