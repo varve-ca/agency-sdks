@@ -141,7 +141,7 @@ async function runAllLiveTests() {
 
   // 13. getDataFromVectorByReferencePeriodRange
   await runTest('getDataFromVectorByReferencePeriodRange', async () => {
-    const res = await client.getDataFromVectorByReferencePeriodRange(testVectorId.toString(), '2020-01-01', '2023-01-01');
+    const res = await client.getDataFromVectorByReferencePeriodRange(testVectorId, '2020-01-01', '2023-01-01');
     if (res[0].status !== 'SUCCESS') throw new Error(`API returned ${res[0].status}`);
   });
 
@@ -174,7 +174,7 @@ async function runAllLiveTests() {
     console.log('\n🎉 ALL 16 ENDPOINTS PASSED!');
   } else {
     console.log('\n⚠️ SOME ENDPOINTS FAILED. See logs above for Zod or API errors.');
-    process.exit(1);
+    throw new Error('Integration tests failed');
   }
 }
 
