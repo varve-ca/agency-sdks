@@ -42,12 +42,77 @@
     }
   },
   "statcan-wds": {
-    "status": "unknown",
-    "last_checked": null,
-    "total": 0,
-    "passed": 0,
-    "failed": 0,
-    "run_url": null,
-    "sections": {}
+    "status": "failing",
+    "last_checked": "2026-04-10T05:42:20.579Z",
+    "total": 16,
+    "passed": 12,
+    "failed": 4,
+    "run_url": "https://github.com/varve-ca/agency-sdks/actions/runs/24228375632",
+    "sections": {
+      "getChangedSeriesList": {
+        "passed": 0,
+        "failed": 1
+      },
+      "getChangedCubeList": {
+        "passed": 0,
+        "failed": 1
+      },
+      "getCubeMetadata": {
+        "passed": 1,
+        "failed": 0
+      },
+      "getSeriesInfoFromCubePidCoord": {
+        "passed": 1,
+        "failed": 0
+      },
+      "getSeriesInfoFromVector": {
+        "passed": 1,
+        "failed": 0
+      },
+      "getAllCubesList": {
+        "passed": 1,
+        "failed": 0
+      },
+      "getAllCubesListLite": {
+        "passed": 1,
+        "failed": 0
+      },
+      "getChangedSeriesDataFromCubePidCoord": {
+        "passed": 0,
+        "failed": 1
+      },
+      "getChangedSeriesDataFromVector": {
+        "passed": 0,
+        "failed": 1
+      },
+      "getDataFromCubePidCoordAndLatestNPeriods": {
+        "passed": 1,
+        "failed": 0
+      },
+      "getDataFromVectorsAndLatestNPeriods": {
+        "passed": 1,
+        "failed": 0
+      },
+      "getBulkVectorDataByRange": {
+        "passed": 1,
+        "failed": 0
+      },
+      "getDataFromVectorByReferencePeriodRange": {
+        "passed": 1,
+        "failed": 0
+      },
+      "getFullTableDownloadCSV": {
+        "passed": 1,
+        "failed": 0
+      },
+      "getFullTableDownloadSDMX": {
+        "passed": 1,
+        "failed": 0
+      },
+      "getCodeSets": {
+        "passed": 1,
+        "failed": 0
+      }
+    }
   }
 }
