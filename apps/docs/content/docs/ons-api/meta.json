@@ -1,0 +1,9 @@
+{
+  "title": "ONS API",
+  "pages": [
+    "index",
+    "track-timeseries",
+    "explore-topics",
+    "filter-export"
+  ]
+}

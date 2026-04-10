@@ -1,0 +1,256 @@
+---
+title: Track timeseries by CDID
+description: Fetch UK inflation, unemployment, GDP, and other economic indicators by CDID — including how to discover CDIDs, structure timeseries data, and parse values correctly.
+---
+
+CDIDs are the fastest and most reliable way to access ONS indicator data. If you're building a dashboard that displays UK economic indicators, this is the primary path you'll use.
+
+## What is a CDID?
+
+A CDID (Coded Data IDentifier) is a four-character alphanumeric code that uniquely identifies a single statistical series across the entire ONS publication catalogue. Think of it like a ticker symbol: `L55O` always means CPIH annual rate, regardless of what page or dataset it appears in.
+
+CDIDs are stable. ONS does not reassign them when tables are restructured or methodologies are updated, which makes them safe to hardcode in application config.
+
+Key CDIDs for common indicators:
+
+| CDID | Indicator |
+|------|-----------|
+| `L55O` | CPIH (Consumer Prices Index incl. housing costs) annual rate |
+| `CZBH` | CPI (Consumer Prices Index) annual rate |
+| `MGSX` | UK unemployment rate (16+, seasonally adjusted) |
+| `DYDC` | UK employment rate (16-64) |
+| `ABMI` | UK GDP (expenditure, chained volume measures, £ billions) |
+| `KGX7` | UK trade balance (goods and services) |
+| `LF24` | UK average weekly earnings (total pay, 3-month average) |
+
+## Fetching by CDID
+
+`getTimeseriesByCdid` is the simplest entry point. It searches for the CDID, retrieves the full data URI, and fetches the complete timeseries — all in one call. Pass one CDID or an array; it always returns an array of `DataResponse` objects in the same order.
+
+```ts
+import { OnsClient } from '@varve/ons-api';
+
+const client = new OnsClient();
+
+// Single CDID
+const [cpih] = await client.getTimeseriesByCdid('L55O');
+
+// Multiple CDIDs in one call
+const [cpih, cpi, unemployment] = await client.getTimeseriesByCdid([
+  'L55O',
+  'CZBH',
+  'MGSX',
+]);
+```
+
+## The DataResponse structure
+
+Each response contains three arrays of datapoints — choose the granularity that matches your use case:
+
+```ts
+interface DataResponse {
+  months: Datapoint[];    // Monthly observations — most commonly populated
+  quarters: Datapoint[];  // Quarterly observations
+  years: Datapoint[];     // Annual observations
+  description: DataDescription;
+  // ...metadata fields
+}
+
+interface Datapoint {
+  date: string;         // Human-readable, e.g. '2024 JAN'
+  value: string;        // Numeric value as a string — always parseFloat()
+  label: string;
+  year: string;
+  month: string;        // e.g. '01' for January
+  quarter: string;      // e.g. 'Q1', empty for non-quarterly series
+  updateDate: string;   // When this observation was last published
+}
+
+interface DataDescription {
+  title: string;
+  cdid: string;
+  unit: string;         // e.g. 'Percent', '£ millions'
+  preUnit: string;      // e.g. '%'
+  releaseDate: string;  // Date of last release
+  nextRelease: string;  // Plain-text date string for next expected release
+  datasetId: string;    // Source dataset ID
+}
+```
+
+<Callout type="warn">
+`value` is always a string. ONS returns numeric values as strings (e.g. `"3.4"`). Always call `parseFloat(dp.value)` before doing arithmetic. Datapoints where the value is not available may carry `""` or a non-numeric string — guard with `Number.isFinite()` after parsing.
+</Callout>
+
+```ts
+// Safe value parsing
+function parseValue(dp: Datapoint): number | null {
+  const n = parseFloat(dp.value);
+  return Number.isFinite(n) ? n : null;
+}
+```
+
+## Choosing the right granularity
+
+Most ONS economic indicators are published monthly. For CPI, unemployment, and earnings, `.months` will be the populated array. For GDP, `.quarters` is typically more complete. Annual summaries live in `.years`.
+
+```ts
+const [cpih] = await client.getTimeseriesByCdid('L55O');
+
+// Monthly — chronological order, most recent last
+const monthly = cpih.months;
+const latest = monthly.at(-1);
+
+console.log(`${cpih.description.title}`);
+console.log(`Latest: ${latest?.value}% (${latest?.date})`);
+console.log(`Next release: ${cpih.description.nextRelease}`);
+```
+
+## Lower-level: getData(uri)
+
+If you already have the ONS URI for a timeseries — from a search result, from your own config, or from a previous `getTopicContent` call — you can call `getData` directly and skip the search step.
+
+```ts
+// URI comes from a search result or is known ahead of time
+const data = await client.getData(
+  '/economy/inflationandpriceindices/timeseries/l55o/dataset'
+);
+```
+
+This is marginally faster than `getTimeseriesByCdid` since it skips the search call. Use it when you're building a pipeline where URIs are stored from a prior discovery step.
+
+## Discovering CDIDs by keyword
+
+If you don't know the CDID for an indicator, use `search` to find it:
+
+```ts
+const results = await client.search({
+  content_type: 'timeseries',
+  q: 'inflation',
+  limit: 10,
+});
+
+for (const item of results.items) {
+  console.log(`${item.cdid}  ${item.title}`);
+  console.log(`  URI: ${item.uri}`);
+}
+```
+
+The search result's `cdid` field gives you the CDID directly. The `uri` field can be passed to `getData` if you want to skip a second search.
+
+You can also narrow by topic or dataset:
+
+```ts
+// Only inflation/prices series
+const results = await client.search({
+  content_type: 'timeseries',
+  q: 'consumer prices',
+  topics: ['economy'],
+});
+
+// Only within a specific dataset
+const results = await client.search({
+  content_type: 'timeseries',
+  dataset_ids: ['cpih01'],
+  limit: 50,
+});
+```
+
+## Handling the nextRelease field
+
+`description.nextRelease` is a plain-text string as ONS publishes it — not a machine-parseable ISO date. Common formats include `"14 May 2025"` and `"May 2025"`. Use it for display; don't rely on it for programmatic scheduling without parsing.
+
+```ts
+const [cpih] = await client.getTimeseriesByCdid('L55O');
+const { releaseDate, nextRelease } = cpih.description;
+
+console.log(`Last updated: ${releaseDate}`);
+console.log(`Next update: ${nextRelease}`);
+// "Next update: 21 May 2025"
+```
+
+If you need to check whether new data is available, compare the `updateDate` on the most recent datapoint against a stored value.
+
+## Complete example: CPIH vs CPI spread dashboard
+
+Fetch the last 24 months of CPIH and CPI monthly data, calculate the spread (CPIH includes owner-occupiers' housing costs, CPI does not), and format for display.
+
+```ts
+import { OnsClient, OnsApiError, type DataResponse } from '@varve/ons-api';
+
+const client = new OnsClient();
+
+function parseValue(dp: { value: string }): number | null {
+  const n = parseFloat(dp.value);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function getInflationSpread(monthCount: number) {
+  const [cpih, cpi] = await client.getTimeseriesByCdid(['L55O', 'CZBH']);
+
+  // Take the last N monthly observations
+  const cpihMonths = cpih.months.slice(-monthCount);
+  const cpiMonths = cpi.months.slice(-monthCount);
+
+  // Build a map from date → values for alignment
+  const cpiByDate = new Map(
+    cpiMonths.map((dp) => [dp.date, parseValue(dp)])
+  );
+
+  const result = cpihMonths
+    .map((dp) => {
+      const cpihVal = parseValue(dp);
+      const cpiVal = cpiByDate.get(dp.date) ?? null;
+      const spread =
+        cpihVal !== null && cpiVal !== null
+          ? parseFloat((cpihVal - cpiVal).toFixed(2))
+          : null;
+
+      return { date: dp.date, cpih: cpihVal, cpi: cpiVal, spread };
+    })
+    .filter((row) => row.cpih !== null);
+
+  return {
+    title: `${cpih.description.title} vs ${cpi.description.title}`,
+    unit: cpih.description.preUnit,
+    nextRelease: cpih.description.nextRelease,
+    data: result,
+  };
+}
+
+try {
+  const report = await getInflationSpread(24);
+
+  console.log(report.title);
+  console.log(`Next release: ${report.nextRelease}\n`);
+
+  for (const row of report.data) {
+    const spread = row.spread !== null ? `+${row.spread}` : 'n/a';
+    console.log(
+      `${row.date.padEnd(10)}  CPIH ${row.cpih}%  CPI ${row.cpi}%  spread ${spread}${report.unit}`
+    );
+  }
+} catch (err) {
+  if (err instanceof OnsApiError) {
+    console.error(`ONS API error ${err.status}: ${err.url}`);
+  }
+  throw err;
+}
+```
+
+## Getting the latest reading only
+
+If you only need the current value and not the full history, slice `.at(-1)` from the appropriate array:
+
+```ts
+const [unemployment] = await client.getTimeseriesByCdid('MGSX');
+const latest = unemployment.months.at(-1);
+
+if (latest) {
+  const value = parseFloat(latest.value);
+  console.log(`UK unemployment rate: ${value}% (${latest.date})`);
+}
+```
+
+<Callout>
+ONS sometimes publishes data with a short lag between the release announcement and the API reflecting the new figures. If your application needs to surface data the moment it's published, poll on the release date and compare `updateDate` on the latest datapoint against the previous known value.
+</Callout>

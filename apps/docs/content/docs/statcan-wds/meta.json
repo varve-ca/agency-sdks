@@ -1,0 +1,9 @@
+{
+  "title": "StatCan WDS",
+  "pages": [
+    "index",
+    "monitor-releases",
+    "fetch-timeseries",
+    "download-tables"
+  ]
+}

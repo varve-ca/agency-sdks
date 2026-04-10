@@ -1,0 +1,100 @@
+---
+title: "@varve/statcan-rdaas"
+description: TypeScript client for Statistics Canada's Reference Data as a Service — a registry of statistical classifications (NAICS, NOC, SIC, and more) and concordances for mapping between versions.
+---
+
+Statistics Canada's Reference Data as a Service (RDaaS) is a registry of **statistical classifications** — the official hierarchical code systems used to categorise industries, occupations, products, and geographies across Canadian government data. `@varve/statcan-rdaas` wraps the RDaaS REST API into a typed, validated TypeScript client.
+
+```bash
+npm install @varve/statcan-rdaas zod
+```
+
+```ts
+import { RDaaSClient, RDaaSApiError } from '@varve/statcan-rdaas';
+
+const client = new RDaaSClient();
+```
+
+## The two core entities
+
+**Classifications** are hierarchical code trees. Each classification defines a set of mutually exclusive, exhaustive categories arranged in levels. For example, the North American Industry Classification System (NAICS 2022) has five levels: Sector → Subsector → Industry Group → Industry → Canadian Industry. Every business in Canada can be assigned exactly one NAICS code at the most detailed level.
+
+Common classifications in RDaaS:
+- **NAICS** — North American Industry Classification System (industry codes)
+- **NOC** — National Occupational Classification (occupation codes)
+- **ISIC** — International Standard Industrial Classification
+- **CPC** — Canadian Product Classification
+
+**Concordances** are directed mappings between two versions of a classification. When Statistics Canada releases a new version of NAICS, they publish a concordance from the old version to the new one. Because industries can merge, split, or be renamed between versions, a concordance records how each old code relates to each new code — including a `distributionFactor` for cases where a single old code maps to multiple new codes.
+
+## Typical use cases
+
+- **Assign a code from a description** — A business registers and provides a plain-English description of its activities. Look up the description in a classification's alphabetic index to find the correct NAICS code.
+- **Understand a code's hierarchy** — You have a 6-digit NAICS code and need to know which 2-digit Sector and 3-digit Subsector it belongs to.
+- **Validate submitted codes** — Accept only the most-detailed leaf-level codes in a data entry form.
+- **Migrate historical data** — You have records coded under NAICS 2017 and need to re-code them to NAICS 2022 for comparison with current data. Use a concordance to handle mergers and splits.
+- **Build a browsable code picker** — Load all codes at a given level and render them as a filterable dropdown or tree view.
+
+## ID extraction — critical pattern
+
+Classification and concordance objects returned by the API identify themselves with a full URI in the `@id` field:
+
+```
+https://api.statcan.gc.ca/rdaas/classification/lQA3IRH1ER3KXwrJ
+```
+
+When calling methods that accept an `id` parameter (e.g. `getClassification`, `getConcordance`), you need only the trailing segment. Always extract it like this:
+
+```ts
+const results = await client.searchClassifications({ q: 'NAICS 2022', status: 'RELEASED' });
+const summary = results.results['@graph'][0];
+
+// Extract the opaque ID from the full URI
+const id = summary['@id'].split('/').pop()!;
+// → 'lQA3IRH1ER3KXwrJ'
+
+const detail = await client.getClassification(id);
+```
+
+This pattern applies everywhere — classification summaries, concordance summaries, and any nested object that carries an `@id` field.
+
+## Configuration
+
+```ts
+const client = new RDaaSClient({
+  baseUrl?: string,    // override API host (useful for testing or proxying)
+  maxRetries?: number, // default: 2
+});
+```
+
+## Error handling
+
+```ts
+import { RDaaSClient, RDaaSApiError } from '@varve/statcan-rdaas';
+
+const client = new RDaaSClient();
+
+try {
+  const classification = await client.getClassification('unknown-id');
+} catch (err) {
+  if (err instanceof RDaaSApiError) {
+    console.error(`HTTP ${err.status} — ${err.url}`);
+    console.error(err.body); // raw response body
+  }
+  throw err;
+}
+```
+
+## Guides
+
+<Cards>
+  <Card title="Find and browse classifications" href="/docs/statcan-rdaas/find-classifications">
+    Search for a classification like NAICS or NOC, retrieve its full code hierarchy, and load all codes into a lookup table.
+  </Card>
+  <Card title="Map codes between versions" href="/docs/statcan-rdaas/concordances">
+    Find a concordance between two classification versions and build a migration function that handles mergers, splits, and renames.
+  </Card>
+  <Card title="Look up codes from plain-English terms" href="/docs/statcan-rdaas/index-lookup">
+    Use the alphabetic index to find the right code for a business description or occupational title.
+  </Card>
+</Cards>

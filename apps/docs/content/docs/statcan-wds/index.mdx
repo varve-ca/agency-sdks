@@ -1,0 +1,83 @@
+---
+title: "@varve/statcan-wds"
+description: TypeScript client for Statistics Canada's Web Data Service — time series data, table metadata, and release monitoring for 6000+ statistical tables.
+---
+
+Statistics Canada's Web Data Service (WDS) provides programmatic access to virtually all of StatCan's published statistical output: over 6,000 data tables covering labour, prices, trade, GDP, health, and more. `@varve/statcan-wds` wraps the 16-endpoint REST API into a typed, validated TypeScript client that handles the API's real-world quirks transparently.
+
+```bash
+npm install @varve/statcan-wds zod
+```
+
+```ts
+import { StatCanClient, StatCanApiError } from '@varve/statcan-wds';
+
+const client = new StatCanClient();
+```
+
+## The data model
+
+StatCan's WDS organises data in a three-level hierarchy:
+
+**Cube (table)** — A published statistical table, identified by a `productId` (e.g. `18100004` for the Consumer Price Index). Each cube has metadata: title, frequency, release schedule, and a dimension structure that defines how rows and columns are organised.
+
+**Vector (series)** — A single time series within a cube, identified by a `vectorId` prefixed with `v` (e.g. `v41690973` for CPI All-items, Canada). A cube with monthly data across 10 provinces and 5 age groups would contain 50 vectors. Vector IDs are stable across releases and are the preferred way to address a specific series programmatically.
+
+**Datapoint** — A single observation: a reference period (`refPer`, e.g. `'2024-01'`), a numeric `value`, and metadata about scale (`scalarFactorCode`) and precision (`decimals`).
+
+## Two ways to address data
+
+The API supports two addressing schemes, and most methods exist in pairs to support both:
+
+**By vectorId** — Direct and unambiguous. Use this when you know which series you want and need to retrieve it repeatedly. Vector IDs are stable; they don't change when StatCan revises a table.
+
+```ts
+// CPI All-items, Canada — vectorId addressing
+const data = await client.getDataFromVectorsAndLatestNPeriods([
+  { vectorId: 41690973, latestN: 12 },
+]);
+```
+
+**By productId + coordinate** — Useful when you're navigating a table by its dimension structure. The coordinate is a dot-separated string of dimension member IDs (e.g. `'1.1.0.0.0.0.0.0.0.0'`), where each position corresponds to a dimension in the cube's metadata.
+
+```ts
+// Same series, addressed by table + coordinate
+const data = await client.getDataFromCubePidCoordAndLatestNPeriods([
+  { productId: 18100004, coordinate: '1.1.0.0.0.0.0.0.0.0', latestN: 12 },
+]);
+```
+
+If you know the `productId` but not the coordinate, retrieve the cube's metadata first to inspect its dimension structure, then construct the coordinate from member codes.
+
+## What the package handles
+
+**409 retries** — The WDS API returns HTTP 409 when a table is being updated or processed. This is a transient state, not an application error. The client retries 409 responses with exponential backoff (default `maxRetries: 2`).
+
+**404/409 on changed-data endpoints** — `getChangedCubeList` and `getChangedSeriesList` return 404 or 409 when called outside a release window (i.e. no data was published on that date). This is documented API behaviour, not an error. The client normalises these into a successful response with a string message in the `object` field rather than throwing.
+
+**Zod validation** — Every response is parsed against a schema. Field types, optional fields, and nested structures are all validated. If StatCan changes a response shape, you get an explicit parse error immediately rather than a silent `undefined` somewhere downstream.
+
+**Batch requests** — Methods that accept arrays (e.g. `getDataFromVectorsAndLatestNPeriods`) send all IDs in a single HTTP request and return a parallel array of results, one per input.
+
+## Configuration
+
+```ts
+const client = new StatCanClient({
+  baseUrl?: string,    // override API host (useful for testing)
+  maxRetries?: number, // default: 2
+});
+```
+
+## Guides
+
+<Cards>
+  <Card title="Monitor releases" href="/docs/statcan-wds/monitor-releases">
+    Check what tables were published on a given date and pull only updated data — patterns for daily data pipelines.
+  </Card>
+  <Card title="Fetch time series" href="/docs/statcan-wds/fetch-timeseries">
+    Retrieve historical data by vector or by table coordinate, handle scalar factors, and batch multiple series.
+  </Card>
+  <Card title="Download full tables" href="/docs/statcan-wds/download-tables">
+    Discover tables, inspect structure, and download complete CSVs for ETL or bulk analysis.
+  </Card>
+</Cards>

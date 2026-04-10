@@ -1,0 +1,254 @@
+---
+title: "Map codes between classification versions"
+description: Find a concordance between two classification versions and build a migration function that handles mergers, splits, and renames — with proportional allocation for one-to-many mappings.
+---
+
+When Statistics Canada releases a new classification version, they publish a **concordance** — a directed mapping that documents exactly how each code in the old version relates to each code in the new version. This guide walks through migrating historical data from NAICS 2017 to NAICS 2022.
+
+## What concordances contain
+
+A concordance has a `source` classification and a `target` classification. Its `codeMaps` array contains one entry per source code, recording the relationship type and the target code(s):
+
+| `maptype` | Meaning |
+|---|---|
+| `No Change` | Same code number, same definition — no action needed |
+| `Code Change` | Same industry, but the code number changed |
+| `Property Change` | Minor scope or definition change, code may be the same or different |
+| `Merger` | Multiple old codes collapsed into one new code |
+| `Breakdown` | One old code expanded into multiple new codes |
+| `Split-off` | Part of an old code moved to a new code; original code still exists |
+| `Take-over` | An industry moved from one code to another that also has its own content |
+
+For `Breakdown` and `Merger` mappings, `distributionFactor` tells you what proportion of the old code's value should be allocated to each new code. A 50/50 split between two new codes would give `distributionFactor: 0.5` on each mapping.
+
+## Step 1 — Find the concordance
+
+```ts
+import { RDaaSClient } from '@varve/statcan-rdaas';
+
+const client = new RDaaSClient();
+
+const results = await client.searchConcordances({
+  q: 'NAICS 2017 2022',
+  status: 'RELEASED',
+  limit: 10,
+});
+
+console.log(`Found ${results.found} concordance(s)`);
+
+for (const concordance of results.results['@graph']) {
+  console.log(`${concordance.name}`);
+  console.log(`  Source: ${concordance.source_name} v${concordance.sourceVersionNumber}`);
+  console.log(`  Target: ${concordance.target_name} v${concordance.targetVersionNumber}`);
+  console.log(`  Status: ${concordance.status}`);
+}
+```
+
+<Callout>
+Concordances are directional. A NAICS 2017 → 2022 concordance is a different object from a NAICS 2022 → 2017 concordance. Make sure the source and target match the direction you need before extracting the ID.
+</Callout>
+
+## Step 2 — Retrieve the full code map
+
+```ts
+const summary = results.results['@graph'][0];
+const id = summary['@id'].split('/').pop()!;
+
+const concordance = await client.getConcordance(id, { lang: 'en' });
+
+console.log(`${concordance.name}`);
+console.log(`Total code mappings: ${concordance.codeMaps.length}`);
+
+// Summarise by maptype
+const byType = new Map<string, number>();
+for (const map of concordance.codeMaps) {
+  byType.set(map.maptype, (byType.get(map.maptype) ?? 0) + 1);
+}
+
+for (const [type, count] of [...byType.entries()].sort()) {
+  console.log(`  ${type}: ${count}`);
+}
+```
+
+## Step 3 — Understand many-to-many mappings
+
+A single source code can map to multiple target codes when a `Breakdown` or `Split-off` occurs. Group the `codeMaps` by `sourceCode` to see the full picture:
+
+```ts
+import type { CodeMap } from '@varve/statcan-rdaas';
+
+// Group by source code
+const bySource = new Map<string, CodeMap[]>();
+for (const map of concordance.codeMaps) {
+  const group = bySource.get(map.sourceCode) ?? [];
+  group.push(map);
+  bySource.set(map.sourceCode, group);
+}
+
+// Find codes that split into multiple targets
+const splits = [...bySource.entries()].filter(([, maps]) => maps.length > 1);
+
+for (const [sourceCode, maps] of splits) {
+  console.log(`\n${sourceCode} — ${maps[0].sourceDescriptor}`);
+  console.log(`  maptype: ${maps[0].maptype}`);
+  for (const m of maps) {
+    const pct = ((m.distributionFactor ?? 1) * 100).toFixed(0);
+    console.log(`  → ${m.targetCode} ${m.targetDescriptor} (${pct}%)`);
+  }
+}
+```
+
+Example output for a Breakdown:
+```
+3121 — Beverage Manufacturing
+  maptype: Breakdown
+  → 31211 Soft Drink and Ice Manufacturing (50%)
+  → 31212 Breweries (50%)
+```
+
+## Step 4 — Build a lookup map for fast migration
+
+Pre-compute a `Map<sourceCode, CodeMap[]>` so you can migrate individual codes in O(1):
+
+```ts
+function buildMigrationMap(codeMaps: CodeMap[]): Map<string, CodeMap[]> {
+  const map = new Map<string, CodeMap[]>();
+  for (const entry of codeMaps) {
+    const group = map.get(entry.sourceCode) ?? [];
+    group.push(entry);
+    map.set(entry.sourceCode, group);
+  }
+  return map;
+}
+
+const migrationMap = buildMigrationMap(concordance.codeMaps);
+```
+
+## Complete example — NAICS 2017 → 2022 migration function
+
+```ts
+import { RDaaSClient, RDaaSApiError } from '@varve/statcan-rdaas';
+import type { CodeMap } from '@varve/statcan-rdaas';
+
+export interface MigrationResult {
+  sourceCode: string;
+  sourceDescriptor: string;
+  maptype: string;
+  targets: Array<{
+    code: string;
+    descriptor: string;
+    /** Proportion of the original value to allocate to this target (0–1). */
+    distributionFactor: number;
+  }>;
+}
+
+export async function buildNaics2017To2022Migrator() {
+  const client = new RDaaSClient();
+
+  // 1. Find the concordance
+  const search = await client.searchConcordances({
+    q: 'NAICS 2017 2022',
+    status: 'RELEASED',
+    limit: 5,
+  });
+
+  // Pick the forward (2017 → 2022) concordance
+  const summary = search.results['@graph'].find(c =>
+    c.source_name?.includes('2017') && c.target_name?.includes('2022'),
+  );
+
+  if (!summary) throw new Error('NAICS 2017→2022 concordance not found');
+
+  const id = summary['@id'].split('/').pop()!;
+  const concordance = await client.getConcordance(id, { lang: 'en' });
+
+  // 2. Build lookup map
+  const migrationMap = new Map<string, CodeMap[]>();
+  for (const entry of concordance.codeMaps) {
+    const group = migrationMap.get(entry.sourceCode) ?? [];
+    group.push(entry);
+    migrationMap.set(entry.sourceCode, group);
+  }
+
+  // 3. Return a migration function
+  return function migrate(naics2017Code: string): MigrationResult {
+    const maps = migrationMap.get(naics2017Code);
+    if (!maps || maps.length === 0) {
+      throw new Error(`No mapping found for NAICS 2017 code: ${naics2017Code}`);
+    }
+
+    return {
+      sourceCode: maps[0].sourceCode,
+      sourceDescriptor: maps[0].sourceDescriptor,
+      maptype: maps[0].maptype,
+      targets: maps.map(m => ({
+        code: m.targetCode,
+        descriptor: m.targetDescriptor,
+        // distributionFactor is null for 1:1 mappings — treat as 1.0
+        distributionFactor: m.distributionFactor ?? 1,
+      })),
+    };
+  };
+}
+
+// Usage
+async function main() {
+  const migrate = await buildNaics2017To2022Migrator();
+
+  // Simple 1:1 rename
+  const result = migrate('5415');
+  console.log(`${result.sourceCode} → ${result.targets.map(t => t.code).join(', ')}`);
+  console.log(`Type: ${result.maptype}`);
+
+  // Handling a split — allocate value proportionally
+  function apportionValue(sourceCode: string, sourceValue: number) {
+    const result = migrate(sourceCode);
+    return result.targets.map(t => ({
+      code: t.code,
+      descriptor: t.descriptor,
+      value: sourceValue * t.distributionFactor,
+    }));
+  }
+
+  const apportioned = apportionValue('3121', 1_000_000);
+  for (const t of apportioned) {
+    console.log(`  ${t.code} ${t.descriptor}: ${t.value.toLocaleString()}`);
+  }
+}
+
+main().catch(err => {
+  if (err instanceof RDaaSApiError) {
+    console.error(`API error ${err.status}: ${err.url}`);
+  }
+  process.exit(1);
+});
+```
+
+<Callout type="warn">
+`distributionFactor` is `null` for `No Change`, `Code Change`, and `Property Change` mappings. It is only meaningful — and only populated — for `Merger`, `Breakdown`, `Split-off`, and `Take-over` mappings where value must be apportioned across multiple targets. Always fall back to `1.0` when the field is null.
+</Callout>
+
+## Handling reverse lookups
+
+If you need to go backward — given a 2022 code, find what 2017 code(s) it came from — build a reverse map from `targetCode`:
+
+```ts
+function buildReverseMap(codeMaps: CodeMap[]): Map<string, CodeMap[]> {
+  const map = new Map<string, CodeMap[]>();
+  for (const entry of codeMaps) {
+    const group = map.get(entry.targetCode) ?? [];
+    group.push(entry);
+    map.set(entry.targetCode, group);
+  }
+  return map;
+}
+
+const reverseMap = buildReverseMap(concordance.codeMaps);
+
+const predecessors = reverseMap.get('31211') ?? [];
+predecessors.forEach(m =>
+  console.log(`  ← ${m.sourceCode} ${m.sourceDescriptor} (${m.maptype})`),
+);
+```
+
+Note that the `reverseDistributionFactor` field on each `CodeMap` provides the inverse allocation weight for this direction.

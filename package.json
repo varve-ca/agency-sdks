@@ -1,5 +1,5 @@
 {
-  "name": "@varve/sdks",
+  "name": "@varve/agency-sdks",
   "private": true,
   "workspaces": [
     "packages/*"

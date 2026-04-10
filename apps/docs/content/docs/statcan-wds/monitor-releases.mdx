@@ -1,0 +1,196 @@
+---
+title: Monitor releases
+description: Check what StatCan tables were published on a given date, then pull only the updated vectors — patterns for daily data pipelines and dashboards.
+---
+
+StatCan publishes data on a fixed release calendar. If you're running a data pipeline or dashboard, you want to react to releases rather than polling every vector on every run. The WDS API provides two endpoints for this: one that returns tables released on a specific date, and one that returns series changed since the most recent release.
+
+## Check what was released on a date
+
+`getChangedCubeList(dateIso)` returns all tables (cubes) that were published on the given date.
+
+```ts
+import { StatCanClient, StatCanApiError } from '@varve/statcan-wds';
+
+const client = new StatCanClient();
+
+const result = await client.getChangedCubeList('2024-11-01');
+
+if (typeof result.object === 'string') {
+  // No release on this date — result.object is a message like "No releases found"
+  console.log('No release on this date:', result.object);
+} else {
+  // Array of ChangedCube objects
+  for (const cube of result.object) {
+    console.log(cube.productId, cube.releaseTime);
+  }
+}
+```
+
+<Callout type="warn">
+`getChangedCubeList` returns HTTP 404 or 409 on non-release dates. The client treats these as successful responses: `result.status` will be `'SUCCESS'` and `result.object` will be a string message. Do not check the HTTP status code directly — check whether `result.object` is a string or an array.
+</Callout>
+
+Each item in the array includes:
+
+```ts
+interface ChangedCube {
+  productId: number;       // e.g. 18100004
+  releaseTime: string;     // ISO timestamp of the release
+  // additional fields depending on the release
+}
+```
+
+## Get series changed since the last release
+
+`getChangedSeriesList()` takes no arguments and returns all vectors that changed in the most recent release, regardless of which date that was.
+
+```ts
+const result = await client.getChangedSeriesList();
+
+if (typeof result.object === 'string') {
+  console.log('No recent changes:', result.object);
+} else {
+  console.log(`${result.object.length} series changed in the last release`);
+  for (const series of result.object) {
+    console.log(series.vectorId, series.productId);
+  }
+}
+```
+
+This is useful when you want to run a job immediately after a known release and don't need to filter by date.
+
+## Full pipeline: check today's releases and pull updated data
+
+The pattern for a daily release-monitoring job:
+
+<Steps>
+<Step>
+Call `getChangedCubeList` with today's date. If `result.object` is a string, there's no release today — exit early.
+</Step>
+<Step>
+Filter the returned cubes for the tables your pipeline cares about.
+</Step>
+<Step>
+For each matching table, fetch updated data using the vector IDs you track.
+</Step>
+</Steps>
+
+```ts
+import { StatCanClient, StatCanApiError } from '@varve/statcan-wds';
+
+const client = new StatCanClient();
+
+// Tables your pipeline monitors, with their key vectors
+const WATCHED_TABLES: Record<number, number[]> = {
+  18100004: [41690973],  // CPI: All-items, Canada
+  14100287: [2062811, 2062815],  // LFS: employment, unemployment rate
+};
+
+async function runDailySync(dateIso: string): Promise<void> {
+  console.log(`Checking releases for ${dateIso}...`);
+
+  let changedCubes: { productId: number; releaseTime: string }[];
+
+  try {
+    const result = await client.getChangedCubeList(dateIso);
+    if (typeof result.object === 'string') {
+      console.log('No release today.');
+      return;
+    }
+    changedCubes = result.object;
+  } catch (err) {
+    if (err instanceof StatCanApiError) {
+      console.error(`API error ${err.status}: ${err.message}`);
+    }
+    throw err;
+  }
+
+  console.log(`${changedCubes.length} tables released.`);
+
+  // Filter for tables we care about
+  const relevantProductIds = changedCubes
+    .map((c) => c.productId)
+    .filter((id) => id in WATCHED_TABLES);
+
+  if (relevantProductIds.length === 0) {
+    console.log('None of our watched tables were released today.');
+    return;
+  }
+
+  console.log(`Fetching data for ${relevantProductIds.length} updated table(s)...`);
+
+  // Collect all vectors to fetch in a single batch call
+  const vectorRequests = relevantProductIds.flatMap((productId) =>
+    (WATCHED_TABLES[productId] ?? []).map((vectorId) => ({
+      vectorId,
+      latestN: 3, // grab the 3 most recent periods to catch any revisions
+    }))
+  );
+
+  const dataResults = await client.getDataFromVectorsAndLatestNPeriods(vectorRequests);
+
+  for (const result of dataResults) {
+    if (typeof result.object === 'string') {
+      console.warn('No data for vector:', result.object);
+      continue;
+    }
+
+    const { vectorId, vectorDataPoint } = result.object;
+    const latest = vectorDataPoint.at(-1);
+    if (latest) {
+      const actualValue = latest.value * Math.pow(10, latest.scalarFactorCode);
+      console.log(`v${vectorId}: ${latest.refPer} = ${actualValue}`);
+    }
+  }
+}
+
+const today = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+runDailySync(today).catch(console.error);
+```
+
+## Polling pattern for scheduled jobs
+
+If you're running this as a cron job or scheduled function, structure the invocation so failures are visible and the job can be re-run safely:
+
+```ts
+// In a Node.js script invoked by cron or a task scheduler
+async function main() {
+  const date = process.env.RELEASE_DATE ?? new Date().toISOString().slice(0, 10);
+
+  try {
+    await runDailySync(date);
+    process.exit(0);
+  } catch (err) {
+    console.error('Sync failed:', err);
+    process.exit(1);
+  }
+}
+
+main();
+```
+
+<Callout>
+StatCan's release calendar is published monthly. You can pre-load it and skip calling `getChangedCubeList` entirely on known non-release days, reducing unnecessary API calls. The release calendar is available at the Statistics Canada website under "Release dates."
+</Callout>
+
+## Using `getChangedSeriesDataFromVector` for targeted updates
+
+If you already know which vectors changed (from `getChangedSeriesList`) and want to retrieve only those data points that are new since the last release, use `getChangedSeriesDataFromVector`. This returns only the most recently released datapoints rather than the last N periods:
+
+```ts
+const changedResult = await client.getChangedSeriesList();
+
+if (typeof changedResult.object !== 'string') {
+  // Pull changed data only for vectors in our watched list
+  const watchedVectorIds = new Set(Object.values(WATCHED_TABLES).flat());
+  const relevantVectors = changedResult.object
+    .filter((s) => watchedVectorIds.has(s.vectorId))
+    .map((s) => ({ vectorId: s.vectorId }));
+
+  if (relevantVectors.length > 0) {
+    const updates = await client.getChangedSeriesDataFromVector(relevantVectors);
+    // process updates...
+  }
+}
+```

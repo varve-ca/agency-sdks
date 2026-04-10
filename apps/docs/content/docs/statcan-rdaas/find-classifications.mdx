@@ -1,0 +1,235 @@
+---
+title: "Find and browse classifications"
+description: Search for a classification like NAICS or NOC, retrieve its full hierarchical code tree, and load all codes into a lookup table or validator.
+---
+
+This guide walks through a realistic scenario: your dataset contains NAICS codes and you need to understand the hierarchy — what sector does code `5415` belong to? What are all the valid codes at the 3-digit level? How do you build a lookup table that maps any code to its descriptor?
+
+## Step 1 — Find the right classification
+
+Use `searchClassifications` to locate the classification you want. Filter by `status: 'RELEASED'` to skip archived or retired versions.
+
+```ts
+import { RDaaSClient } from '@varve/statcan-rdaas';
+
+const client = new RDaaSClient();
+
+const results = await client.searchClassifications({
+  q: 'NAICS 2022',
+  status: 'RELEASED',
+  limit: 5,
+});
+
+console.log(`Found ${results.found} classification(s)`);
+
+for (const summary of results.results['@graph']) {
+  console.log(`${summary.name} — v${summary.versionNumber}`);
+  console.log(`  Codes: ${summary.codeCount}, Levels: ${summary.levelCount}`);
+  console.log(`  Last updated: ${summary.lastUpdated}`);
+  console.log(`  ID URI: ${summary['@id']}`);
+}
+```
+
+The `found` field reflects the total number of matches, not just the current page. Use `start` and `limit` to paginate:
+
+```ts
+// Load results in pages of 20
+async function* paginateClassifications(q: string) {
+  const limit = 20;
+  let start = 0;
+
+  while (true) {
+    const page = await client.searchClassifications({ q, limit, start });
+    yield* page.results['@graph'];
+
+    start += limit;
+    if (start >= page.found) break;
+  }
+}
+
+for await (const summary of paginateClassifications('NAICS')) {
+  console.log(summary.name);
+}
+```
+
+To see what filter values the API supports (audience and status options):
+
+```ts
+const filters = await client.getClassificationSearchFilters();
+// Returns available 'audience' and 'status' facet values
+```
+
+## Step 2 — Extract the ID and retrieve full detail
+
+The `@id` field is a full URI. Extract the trailing segment before passing it to `getClassification`:
+
+```ts
+const summary = results.results['@graph'][0];
+const id = summary['@id'].split('/').pop()!;
+
+const classification = await client.getClassification(id, { lang: 'en' });
+
+console.log(classification.name);
+console.log(classification.description);
+
+// The levels array tells you the name of each depth
+// e.g. [{ levelDepth: 1, name: 'Sector', codeCount: 20 },
+//        { levelDepth: 2, name: 'Subsector', codeCount: 102 }, ...]
+for (const level of classification.levels) {
+  console.log(`Level ${level.levelDepth}: ${level.name} (${level.codeCount} codes)`);
+}
+```
+
+## Step 3 — Walk the hierarchical code tree
+
+`getClassification` returns `codes` as a recursive tree. Each `ClassificationCode` node can have `children`, which in turn have their own `children`:
+
+```ts
+import type { ClassificationCode } from '@varve/statcan-rdaas';
+
+// Find a specific code anywhere in the tree
+function findCode(
+  codes: ClassificationCode[],
+  target: string,
+): ClassificationCode | undefined {
+  for (const node of codes) {
+    if (node.code === target) return node;
+    if (node.children) {
+      const found = findCode(node.children, target);
+      if (found) return found;
+    }
+  }
+  return undefined;
+}
+
+const node = findCode(classification.codes, '5415');
+if (node) {
+  console.log(`${node.code} — ${node.descriptor}`);
+  // → '5415 — Computer Systems Design and Related Services'
+  if (node.children) {
+    console.log(`  Sub-codes: ${node.children.map(c => c.code).join(', ')}`);
+  }
+}
+```
+
+Collect all codes at a specific level depth (e.g. all 3-digit Subsectors):
+
+```ts
+function collectAtDepth(
+  codes: ClassificationCode[],
+  targetDepth: number,
+  currentDepth = 1,
+): ClassificationCode[] {
+  const out: ClassificationCode[] = [];
+  for (const node of codes) {
+    if (currentDepth === targetDepth) {
+      out.push(node);
+    } else if (node.children && currentDepth < targetDepth) {
+      out.push(...collectAtDepth(node.children, targetDepth, currentDepth + 1));
+    }
+  }
+  return out;
+}
+
+const subsectors = collectAtDepth(classification.codes, 2);
+console.log(`${subsectors.length} subsectors`);
+subsectors.forEach(s => console.log(`  ${s.code} — ${s.descriptor}`));
+```
+
+## Step 4 — Load all codes into a flat lookup table
+
+When you need to resolve any code to its descriptor quickly, use `getClassificationCategories` to retrieve every code at every level as a flat list — no recursion needed:
+
+```ts
+const { '@graph': allCategories } = await client.getClassificationCategories(id, { lang: 'en' });
+
+// Build a Map keyed by code string
+const lookup = new Map(allCategories.map(cat => [cat.code, cat]));
+
+function resolveCode(code: string) {
+  const cat = lookup.get(code);
+  if (!cat) throw new Error(`Unknown code: ${code}`);
+  return {
+    code: cat.code,
+    descriptor: cat.descriptor,
+    level: cat.levelDepth,
+    definition: cat.definition,
+  };
+}
+
+console.log(resolveCode('5415'));
+// → { code: '5415', descriptor: 'Computer Systems Design...', level: 3, definition: '...' }
+```
+
+## Step 5 — Validate against only leaf codes
+
+If you want to accept only the most-specific (leaf-level) codes — the ones with no children — use `getClassificationCategoriesDetailed`:
+
+```ts
+const { '@graph': leafCategories } = await client.getClassificationCategoriesDetailed(id, { lang: 'en' });
+
+const validCodes = new Set(leafCategories.map(cat => cat.code));
+
+function validateNaicsCode(code: string): boolean {
+  return validCodes.has(code);
+}
+
+console.log(validateNaicsCode('541511')); // true — Canadian Industry level (leaf)
+console.log(validateNaicsCode('5415'));   // false — Industry Group level (not a leaf)
+```
+
+## Complete example — explore "Information and Cultural Industries"
+
+```ts
+import { RDaaSClient, RDaaSApiError } from '@varve/statcan-rdaas';
+
+const client = new RDaaSClient();
+
+async function exploreNaicsSector51() {
+  // 1. Find NAICS 2022
+  const search = await client.searchClassifications({
+    q: 'NAICS 2022',
+    status: 'RELEASED',
+    limit: 1,
+  });
+
+  if (search.found === 0) throw new Error('NAICS 2022 not found');
+
+  const id = search.results['@graph'][0]['@id'].split('/').pop()!;
+
+  // 2. Load all categories flat
+  const { '@graph': categories } = await client.getClassificationCategories(id, { lang: 'en' });
+
+  // 3. Filter to sector 51 and all its children
+  // NAICS codes: 2-digit = Sector, 3-digit = Subsector, 4-digit = Industry Group,
+  //              5-digit = Industry, 6-digit = Canadian Industry
+  const sector51 = categories.filter(cat => cat.code.startsWith('51'));
+
+  console.log(`Sector 51 — Information and Cultural Industries`);
+  console.log(`Total codes in sector: ${sector51.length}`);
+
+  // Group by level
+  const byLevel = new Map<number, typeof categories>();
+  for (const cat of sector51) {
+    const group = byLevel.get(cat.levelDepth) ?? [];
+    group.push(cat);
+    byLevel.set(cat.levelDepth, group);
+  }
+
+  for (const [depth, codes] of [...byLevel.entries()].sort()) {
+    console.log(`\nLevel ${depth} (${codes.length} codes):`);
+    codes.forEach(c => console.log(`  ${c.code.padEnd(8)} ${c.descriptor}`));
+  }
+}
+
+exploreNaicsSector51().catch(err => {
+  if (err instanceof RDaaSApiError) {
+    console.error(`API error ${err.status}: ${err.url}`);
+  }
+  process.exit(1);
+});
+```
+
+<Callout>
+The `getClassification` tree and `getClassificationCategories` flat list contain the same codes. Use the tree when you need to traverse parent-child relationships; use the flat list when you need fast lookups by code string or want to filter by `levelDepth`.
+</Callout>

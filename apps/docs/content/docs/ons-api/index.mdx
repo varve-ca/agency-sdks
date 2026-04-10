@@ -1,0 +1,109 @@
+---
+title: "@varve/ons-api"
+description: TypeScript client for the UK Office for National Statistics beta API — timeseries indicators, multidimensional datasets, and custom exports for UK economic and social statistics.
+---
+
+The UK Office for National Statistics publishes the country's most authoritative economic, demographic, and social statistics: inflation, unemployment, GDP, population estimates, trade, earnings, and more. `@varve/ons-api` wraps the ONS beta REST API (`api.beta.ons.gov.uk/v1`) into a typed, validated TypeScript client that handles rate limiting transparently and works in Node.js, browsers, and Cloudflare Workers.
+
+```bash
+npm install @varve/ons-api zod
+```
+
+```ts
+import { OnsClient, OnsApiError } from '@varve/ons-api';
+
+const client = new OnsClient();
+```
+
+## Two data access paths
+
+The ONS API exposes its data through two parallel structures. Understanding which to use will determine every method call downstream.
+
+### Timeseries (CDIDs)
+
+A **CDID** (Coded Data IDentifier) is a four-character code that uniquely identifies a single statistical indicator series — similar to a ticker symbol. CDIDs are stable over time and are the canonical way ONS publishes and cross-references indicators.
+
+```
+L55O  →  CPIH annual rate
+CZBH  →  CPI annual rate
+MGSX  →  UK unemployment rate (16+, seasonally adjusted)
+ABMI  →  UK GDP (expenditure, chained volume measures)
+LF24  →  UK average weekly earnings (total pay, 3-month average)
+```
+
+Each CDID gives you a complete time series: monthly, quarterly, and annual data going back decades, plus metadata including units, next release date, and source dataset. This is the fastest path when you know what you want.
+
+```ts
+// Fetch CPIH and CPI in one call
+const [cpih, cpi] = await client.getTimeseriesByCdid(['L55O', 'CZBH']);
+
+const latest = cpih.months.at(-1);
+console.log(`CPIH: ${latest?.value}% (${latest?.date})`);
+```
+
+### Datasets (multidimensional)
+
+Datasets are structured tables with multiple dimensions — geography, age group, industry, product category — allowing you to query specific slices. For example, the `cpih01` dataset contains CPIH broken down by aggregate type and ONS geography code, letting you query England vs Wales vs Scotland separately.
+
+Datasets follow a hierarchy: **dataset → edition → version → observations**. You navigate this hierarchy to reach actual data points or export files.
+
+```ts
+// List all versions of the CPIH dataset
+const versions = await client.getDatasetVersions('cpih01', 'time-series');
+
+// Query a specific slice synchronously
+const obs = await client.getObservations('cpih01', 'time-series', 6, {
+  aggregate: 'cpih1dim1A0',
+  geography: 'K02000001',  // United Kingdom
+  time: '*',               // wildcard — all time periods
+});
+```
+
+## Rate limiting
+
+The ONS API throttles aggressively. The client automatically retries on HTTP 429 responses, respecting the `Retry-After` header returned by the server. All requests also send an appropriate `User-Agent` header as required by the ONS API terms. The default retry limit is 2; raise it for batch workloads:
+
+```ts
+const client = new OnsClient({ maxRetries: 5 });
+```
+
+## Configuration
+
+```ts
+const client = new OnsClient({
+  baseUrl?: string,    // override API host (useful for testing)
+  maxRetries?: number, // default: 2
+});
+```
+
+## Error handling
+
+All HTTP errors throw `OnsApiError`, which includes the HTTP status code, request URL, and raw response body for debugging:
+
+```ts
+import { OnsClient, OnsApiError } from '@varve/ons-api';
+
+try {
+  const data = await client.getData('/economy/inflationandpriceindices/timeseries/l55o/dataset');
+} catch (err) {
+  if (err instanceof OnsApiError) {
+    console.error(`ONS API error ${err.status} at ${err.url}`);
+    console.error(err.body);
+  }
+  throw err;
+}
+```
+
+## Guides
+
+<Cards>
+  <Card title="Track timeseries by CDID" href="/docs/ons-api/track-timeseries">
+    Fetch CPIH, CPI, unemployment, and other indicators by CDID — the fastest path to UK economic data.
+  </Card>
+  <Card title="Explore topics and datasets" href="/docs/ons-api/explore-topics">
+    Navigate the ONS topic hierarchy to discover dataset IDs, inspect dimensions, and find the right version to query.
+  </Card>
+  <Card title="Filter and export" href="/docs/ons-api/filter-export">
+    Create custom cuts of multidimensional datasets and export them as CSV or XLS for pipelines and spreadsheets.
+  </Card>
+</Cards>

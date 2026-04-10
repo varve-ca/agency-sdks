@@ -1,0 +1,301 @@
+---
+title: Filter and export datasets
+description: Create custom cuts of ONS datasets and export them as CSV or XLS — including how to poll for completion and handle the async filter lifecycle.
+---
+
+The ONS filter API lets you specify exactly which dimension values you want from a dataset and generates a downloadable file (CSV or XLS) containing only that slice. This is the right approach when you need structured data for a spreadsheet, ETL pipeline, or data warehouse load — rather than individual observations fetched one at a time.
+
+## The filter lifecycle
+
+Creating a filter is an asynchronous operation:
+
+<Steps>
+<Step>
+**Create the filter** — specify the dataset version and which dimension options you want. The API returns a `filter_id` and a `filter_output_id`.
+</Step>
+<Step>
+**Submit the filter** — if you didn't pass `submitted: true` on creation, submit separately. This triggers processing.
+</Step>
+<Step>
+**Poll for completion** — call `getFilterOutput(filterOutputId)` until `state === 'completed'` (or `'failed'`).
+</Step>
+<Step>
+**Download the file** — access `output.downloads.csv.href` or `output.downloads.xls.href`. The URL is ready to fetch directly.
+</Step>
+</Steps>
+
+<Callout type="warn">
+Filter outputs are not guaranteed to persist indefinitely. Download the file promptly after the output reaches `'completed'` state. Do not cache the `href` URL across sessions.
+</Callout>
+
+## Step 1: Discover valid dimension option values
+
+Before creating a filter, confirm which option values exist for each dimension. Passing an invalid option code will result in an empty or failed output.
+
+```ts
+import { OnsClient } from '@varve/ons-api';
+
+const client = new OnsClient();
+
+// Confirm available geography options for cpih01 v6
+const { items: geoOptions } = await client.getDatasetDimensionOptions(
+  'cpih01',
+  'time-series',
+  6,
+  'geography'
+);
+
+const geoCodes = geoOptions.map((o) => ({ option: o.option, label: o.label }));
+console.log(geoCodes);
+// [{ option: 'K02000001', label: 'United Kingdom' },
+//  { option: 'E92000001', label: 'England' }, ...]
+```
+
+Do the same for every dimension you're filtering on. The `getDatasetDimensions` call will tell you the dimension names; `getDatasetDimensionOptions` gives you the valid values for each.
+
+## Step 2: Create and submit the filter
+
+Pass the dataset version coordinates and an array of dimension objects, each with a `name` and `options` array. Set `submitted: true` to process immediately.
+
+```ts
+const filter = await client.createFilter(
+  {
+    dataset: {
+      id: 'cpih01',
+      edition: 'time-series',
+      version: 6,
+    },
+    dimensions: [
+      {
+        name: 'geography',
+        options: ['K02000001', 'E92000001'],  // UK + England
+      },
+      {
+        name: 'aggregate',
+        options: ['cpih1dim1A0'],  // CPIH all-items
+      },
+      // Omit 'time' to include all time periods, or specify a subset:
+      // { name: 'time', options: ['2024 JAN', '2024 FEB', '2024 MAR'] }
+    ],
+  },
+  true  // submitted: true — process immediately
+);
+
+console.log(`Filter ID: ${filter.filter_id}`);
+// The filter output ID is embedded in the filter's links
+const filterOutputId = filter.links.filter_output.id;
+console.log(`Filter Output ID: ${filterOutputId}`);
+```
+
+### Two-step flow (create then submit)
+
+If you need to inspect or modify the filter before processing, omit `submitted` (it defaults to `false`). The filter is created in a pending state, and you submit it explicitly when ready. This is rarely needed — use `submitted: true` for most cases.
+
+## Step 3: Poll for completion
+
+`getFilterOutput` returns the current state of the processing job. Poll it with exponential backoff until `state` is `'completed'` or `'failed'`.
+
+```ts
+type FilterState = 'created' | 'completed' | 'failed';
+
+interface FilterOutput {
+  id: string;
+  filter_id: string;
+  state: FilterState;
+  downloads?: {
+    csv?: { href: string; size: string };
+    xls?: { href: string; size: string };
+  };
+  events: Array<{ type: string; time: string }>;
+}
+```
+
+```ts
+async function pollFilterOutput(
+  client: OnsClient,
+  filterOutputId: string,
+  options: { timeoutMs?: number; maxBackoffMs?: number } = {}
+): Promise<FilterOutput> {
+  const { timeoutMs = 120_000, maxBackoffMs = 10_000 } = options;
+  const deadline = Date.now() + timeoutMs;
+
+  let attempt = 0;
+
+  while (Date.now() < deadline) {
+    const output = await client.getFilterOutput(filterOutputId);
+
+    if (output.state === 'completed') {
+      return output;
+    }
+
+    if (output.state === 'failed') {
+      const lastEvent = output.events.at(-1);
+      throw new Error(
+        `Filter processing failed. Last event: ${lastEvent?.type ?? 'unknown'} at ${lastEvent?.time ?? 'unknown'}`
+      );
+    }
+
+    // Exponential backoff: 1s, 2s, 4s, 8s, then cap at maxBackoffMs
+    const backoffMs = Math.min(1000 * Math.pow(2, attempt), maxBackoffMs);
+    attempt++;
+
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+
+    await new Promise((resolve) => setTimeout(resolve, Math.min(backoffMs, remaining)));
+  }
+
+  throw new Error(
+    `Filter output ${filterOutputId} did not complete within ${timeoutMs / 1000}s`
+  );
+}
+```
+
+## Step 4: Access the download URL
+
+Once `state === 'completed'`, the `downloads` field is populated. Both `csv` and `xls` may be present; prefer `csv` for programmatic use.
+
+```ts
+const output = await pollFilterOutput(client, filterOutputId);
+
+const csvHref = output.downloads?.csv?.href;
+const xlsHref = output.downloads?.xls?.href;
+
+if (!csvHref) throw new Error('No CSV download available in completed output');
+
+console.log(`CSV download: ${csvHref}`);
+console.log(`File size: ${output.downloads?.csv?.size}`);
+
+// Fetch the file (Node.js)
+const response = await fetch(csvHref);
+const csv = await response.text();
+```
+
+## Complete production example
+
+Filter CPIH data for UK overall and England separately, submit immediately, poll with exponential backoff, and return the CSV download URL.
+
+```ts
+import { OnsClient, OnsApiError } from '@varve/ons-api';
+
+const client = new OnsClient({ maxRetries: 3 });
+
+interface ExportResult {
+  csvUrl: string;
+  xlsUrl?: string;
+  fileSizeBytes: string | undefined;
+}
+
+async function exportCpihByGeography(
+  geographies: string[],
+  aggregates: string[]
+): Promise<ExportResult> {
+  // 1. Determine the latest dataset version
+  const { items: versions } = await client.getDatasetVersions('cpih01', 'time-series');
+  const latestVersion = versions.sort((a, b) => b.version - a.version)[0];
+
+  console.log(`Using cpih01 time-series v${latestVersion.version}`);
+
+  // 2. Create and immediately submit the filter
+  const filter = await client.createFilter(
+    {
+      dataset: {
+        id: 'cpih01',
+        edition: 'time-series',
+        version: latestVersion.version,
+      },
+      dimensions: [
+        { name: 'geography', options: geographies },
+        { name: 'aggregate', options: aggregates },
+        // No 'time' dimension — include all periods
+      ],
+    },
+    true  // submitted: true
+  );
+
+  const filterOutputId = filter.links.filter_output.id;
+  console.log(`Submitted filter ${filter.filter_id}, output ${filterOutputId}`);
+
+  // 3. Poll until complete (2-minute timeout, backoff up to 10s)
+  const output = await pollFilterOutput(client, filterOutputId, {
+    timeoutMs: 120_000,
+    maxBackoffMs: 10_000,
+  });
+
+  const csvHref = output.downloads?.csv?.href;
+  if (!csvHref) {
+    throw new Error('Filter completed but no CSV download is available');
+  }
+
+  return {
+    csvUrl: csvHref,
+    xlsUrl: output.downloads?.xls?.href,
+    fileSizeBytes: output.downloads?.csv?.size,
+  };
+}
+
+// Usage
+try {
+  const result = await exportCpihByGeography(
+    ['K02000001', 'E92000001'],  // UK + England
+    ['cpih1dim1A0']              // CPIH all-items
+  );
+
+  console.log(`\nDownload ready:`);
+  console.log(`  CSV: ${result.csvUrl}`);
+  if (result.xlsUrl) console.log(`  XLS: ${result.xlsUrl}`);
+  console.log(`  Size: ${result.fileSizeBytes}`);
+
+  // Immediately fetch and process the CSV
+  const response = await fetch(result.csvUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to download CSV: ${response.status}`);
+  }
+  const csv = await response.text();
+  console.log(`\nDownloaded ${csv.length} bytes`);
+} catch (err) {
+  if (err instanceof OnsApiError) {
+    console.error(`ONS API error ${err.status} at ${err.url}`);
+    console.error(err.body);
+  }
+  throw err;
+}
+```
+
+## Alternative: getObservations for smaller queries
+
+For small, synchronous queries where you don't need a file download, `getObservations` returns data directly without the async filter lifecycle.
+
+```ts
+// Get CPIH all-items for UK, all time periods
+const obs = await client.getObservations(
+  'cpih01',
+  'time-series',
+  latestVersion.version,
+  {
+    aggregate: 'cpih1dim1A0',
+    geography: 'K02000001',
+    time: '*',  // wildcard — returns all time values
+  }
+);
+
+console.log(`Total observations: ${obs.total_observations}`);
+
+for (const o of obs.observations) {
+  const value = parseFloat(o.observation);
+  const time = o.dimensions?.time?.option_url?.split('/').at(-1) ?? '?';
+  console.log(`  ${time}: ${value}`);
+}
+```
+
+**Wildcard constraints:** Only one dimension may use `'*'` as a wildcard at a time. All other dimensions must specify exact option values. If you need to cross multiple dimensions freely (e.g. all geographies × all time periods), use the filter API instead.
+
+**Use `getObservations` when:**
+- You need data immediately without polling
+- You're querying one dimension with `'*'` and all others fixed
+- The result set is small enough to handle in-memory
+
+**Use the filter API when:**
+- You need a file for external consumption (Excel, data pipeline ingestion)
+- The cross-product of your dimension selections is large
+- You need the complete dataset in a structured format

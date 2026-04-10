@@ -1,0 +1,134 @@
+---
+title: Getting Started
+description: Install the packages and make your first API request in under a minute.
+---
+
+## Prerequisites
+
+- Node.js 18 or later (or a modern browser / Cloudflare Worker)
+- `zod` as a peer dependency — all three packages require it
+
+## Quick start
+
+### Statistics Canada — time series data
+
+```bash
+npm install @varve/statcan-wds zod
+```
+
+```ts
+import { StatCanClient } from '@varve/statcan-wds';
+
+const client = new StatCanClient();
+
+// Fetch the last 12 months of Canada's Consumer Price Index (vector v41690973)
+const result = await client.getDataFromVectorsAndLatestNPeriods([
+  { vectorId: 41690973, latestN: 12 },
+]);
+
+const series = result[0].object;
+if (series) {
+  console.log(series.vectorDataPoint.map(p => `${p.refPer}: ${p.value}`));
+}
+```
+
+### Statistics Canada — classifications
+
+```bash
+npm install @varve/statcan-rdaas zod
+```
+
+```ts
+import { RDaaSClient } from '@varve/statcan-rdaas';
+
+const client = new RDaaSClient();
+
+// Find the NAICS 2022 classification
+const results = await client.searchClassifications({
+  q: 'NAICS 2022',
+  status: 'RELEASED',
+});
+
+const id = results.results['@graph'][0]['@id'].split('/').pop()!;
+const classification = await client.getClassification(id);
+
+console.log(classification.name);         // "North American Industry Classification System (NAICS) Canada 2022"
+console.log(classification.codes?.length); // top-level sectors
+```
+
+### UK Office for National Statistics
+
+```bash
+npm install @varve/ons-api zod
+```
+
+```ts
+import { OnsClient } from '@varve/ons-api';
+
+const client = new OnsClient();
+
+// Fetch the UK CPIH (Consumer Prices Index including housing costs) timeseries
+const [cpih] = await client.getTimeseriesByCdid('L55O');
+
+console.log(cpih.description.title);       // "CPIH ANNUAL RATE 00: ALL ITEMS 2015=100"
+console.log(cpih.months.at(-1));           // most recent monthly reading
+```
+
+## Error handling
+
+All clients throw a typed error class on non-2xx responses:
+
+```ts
+import { StatCanApiError } from '@varve/statcan-wds';
+import { RDaaSApiError } from '@varve/statcan-rdaas';
+import { OnsApiError } from '@varve/ons-api';
+
+try {
+  await client.getCubeMetadata([99999999]);
+} catch (err) {
+  if (err instanceof StatCanApiError) {
+    console.error(err.status); // HTTP status code
+    console.error(err.url);    // full URL requested
+    console.error(err.body);   // raw response body
+  }
+}
+```
+
+## Configuration
+
+Every client accepts an optional config object:
+
+```ts
+const client = new StatCanClient({
+  baseUrl: 'https://www150.statcan.gc.ca/t1/wds/rest', // override for proxying
+  maxRetries: 3, // default: 2
+});
+```
+
+```ts
+const client = new RDaaSClient({
+  baseUrl: 'https://api.statcan.gc.ca/rdaas',
+  maxRetries: 3,
+});
+```
+
+```ts
+const client = new OnsClient({
+  baseUrl: 'https://api.beta.ons.gov.uk/v1',
+  maxRetries: 3,
+});
+```
+
+## Next steps
+
+<Cards>
+  <Card title="StatCan WDS guides" href="/docs/statcan-wds">
+    Monitor releases, fetch time series, download full tables.
+  </Card>
+  <Card title="StatCan RDaaS guides" href="/docs/statcan-rdaas">
+    Browse NAICS/NOC, map codes across versions, search plain-English terms.
+  </Card>
+  <Card title="ONS API guides" href="/docs/ons-api">
+    Track inflation timeseries, explore topics, export filtered data.
+  </Card>
+</Cards>

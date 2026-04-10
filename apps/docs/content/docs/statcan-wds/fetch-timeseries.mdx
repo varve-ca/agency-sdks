@@ -1,0 +1,227 @@
+---
+title: Fetch time series data
+description: Retrieve historical data by vector or by table coordinate, handle scalar factors, and batch multiple series in a single call.
+---
+
+The WDS API offers several methods for fetching time series data depending on how you want to address a series and what time range you need. This guide walks through the main patterns for building dashboards, running analyses, or feeding data pipelines.
+
+## Addressing modes: vectorId vs productId + coordinate
+
+Every series in the WDS has two stable identifiers:
+
+**vectorId** — A numeric ID prefixed with `v` in StatCan's publications (e.g. `v41690973`). This is the simplest and most reliable way to retrieve a specific series. Vector IDs do not change when StatCan revises table structure or re-releases data.
+
+**productId + coordinate** — The table ID (`productId`, e.g. `18100004`) combined with a dot-separated coordinate string (e.g. `'1.1.0.0.0.0.0.0.0.0'`). Each position in the coordinate corresponds to a dimension in the table, and the value is the member code within that dimension. This is useful when you're navigating a table programmatically and constructing the series address from dimension selections.
+
+For most use cases, prefer vectorId. Use the coordinate approach when you need to enumerate or select across dimensions.
+
+## Get the last N periods
+
+`getDataFromVectorsAndLatestNPeriods` is the most common method. It returns the `latestN` most recently published datapoints for each requested vector.
+
+```ts
+import { StatCanClient } from '@varve/statcan-wds';
+
+const client = new StatCanClient();
+
+// Fetch the last 24 months of CPI All-items, Canada
+const results = await client.getDataFromVectorsAndLatestNPeriods([
+  { vectorId: 41690973, latestN: 24 },
+]);
+
+const result = results[0];
+
+if (typeof result.object === 'string') {
+  throw new Error(`No data: ${result.object}`);
+}
+
+const { vectorId, productId, vectorDataPoint } = result.object;
+console.log(`Vector v${vectorId} (table ${productId}): ${vectorDataPoint.length} datapoints`);
+```
+
+The equivalent using productId + coordinate:
+
+```ts
+const results = await client.getDataFromCubePidCoordAndLatestNPeriods([
+  { productId: 18100004, coordinate: '1.1.0.0.0.0.0.0.0.0', latestN: 24 },
+]);
+```
+
+## Get data for a date range
+
+`getDataFromVectorByReferencePeriodRange` returns all datapoints whose reference period falls within the given range. Reference periods are the period the data describes (e.g. `'2024-01'` for January 2024), not the release date.
+
+```ts
+// CPI monthly data from January 2020 through December 2023
+const results = await client.getDataFromVectorByReferencePeriodRange(
+  41690973,
+  '2020-01-01',
+  '2023-12-01',
+);
+
+if (typeof results[0].object !== 'string') {
+  const { vectorDataPoint } = results[0].object;
+  console.log(`${vectorDataPoint.length} monthly observations`);
+}
+```
+
+You can also pass an array of vector IDs to fetch multiple series over the same range:
+
+```ts
+const results = await client.getDataFromVectorByReferencePeriodRange(
+  [41690973, 2062811],  // CPI + LFS employment
+  '2022-01-01',
+  '2024-06-01',
+);
+```
+
+## Working with datapoints: values, scale, and precision
+
+Each datapoint in `vectorDataPoint` has the following structure:
+
+```ts
+interface Datapoint {
+  refPer: string;          // Reference period, e.g. '2024-01'
+  value: number | null;    // Raw value — must be scaled before use
+  decimals: number;        // Decimal places for display
+  scalarFactorCode: number; // Scale exponent: 0=units, 3=thousands, 6=millions, 9=billions
+  frequencyCode: number;   // 1=Annual, 2=Semi-annual, 4=Quarterly, 6=Monthly, 12=Weekly
+  releaseTime: string;     // When this datapoint was published
+}
+```
+
+**Applying the scalar factor** — The `value` field is stored at the scaled unit. To get the actual number, multiply by 10 raised to the power of `scalarFactorCode`:
+
+```ts
+function actualValue(datapoint: { value: number | null; scalarFactorCode: number }): number | null {
+  if (datapoint.value === null) return null;
+  return datapoint.value * Math.pow(10, datapoint.scalarFactorCode);
+}
+```
+
+For example, if `value = 158.1` and `scalarFactorCode = 0`, the actual value is `158.1` (CPI index, units). If `value = 20123.4` and `scalarFactorCode = 3`, the actual value is `20,123,400` (thousands).
+
+**Null values** — `value` can be `null` when data is suppressed, not yet available, or revised to not applicable. Always handle nulls before arithmetic.
+
+**Display precision** — Use `decimals` only for formatting output. It describes how many decimal places StatCan rounds to in their publications.
+
+```ts
+function formatValue(dp: Datapoint): string {
+  const v = actualValue(dp);
+  if (v === null) return 'n/a';
+  return v.toFixed(dp.decimals);
+}
+```
+
+## Batch multiple series in one call
+
+Methods that accept arrays send all requests in a single HTTP call and return results in the same order:
+
+```ts
+const requests = [
+  { vectorId: 41690973, latestN: 12 },  // CPI All-items, Canada
+  { vectorId: 41690914, latestN: 12 },  // CPI Food, Canada
+  { vectorId: 41690921, latestN: 12 },  // CPI Shelter, Canada
+];
+
+const results = await client.getDataFromVectorsAndLatestNPeriods(requests);
+
+const series = results.map((result, i) => {
+  if (typeof result.object === 'string') {
+    console.warn(`No data for vectorId ${requests[i].vectorId}: ${result.object}`);
+    return null;
+  }
+  return result.object;
+});
+
+// Build a aligned time series map: refPer → { vectorId: value }
+const periods = new Map<string, Record<number, number | null>>();
+
+for (const s of series) {
+  if (!s) continue;
+  for (const dp of s.vectorDataPoint) {
+    if (!periods.has(dp.refPer)) periods.set(dp.refPer, {});
+    periods.get(dp.refPer)![s.vectorId] = actualValue(dp);
+  }
+}
+
+for (const [period, values] of [...periods.entries()].sort()) {
+  console.log(period, values);
+}
+```
+
+<Callout>
+There is no hard limit documented for batch size, but large batches may time out. In practice, batches of up to 100 vectors work reliably. For very large requests, split into chunks of 50–100.
+</Callout>
+
+## Look up series metadata
+
+Before fetching data, you may want to confirm what a vector contains — its title, frequency, and scale. Use `getSeriesInfoFromVector`:
+
+```ts
+const infoResults = await client.getSeriesInfoFromVector([
+  { vectorId: 41690973 },
+]);
+
+const info = infoResults[0];
+if (typeof info.object !== 'string') {
+  const { vectorId, productId, SeriesTitleEn, frequencyCode, scalarFactorCode, decimals } = info.object;
+  console.log(`v${vectorId}: "${SeriesTitleEn}"`);
+  console.log(`  Table: ${productId}, Frequency: ${frequencyCode}, Scale: 10^${scalarFactorCode}`);
+}
+```
+
+`SeriesTitleEn` gives you a plain-language description like `"Consumer Price Index (CPI), all-items, Canada"`. This is useful for labelling charts or validating that a vector ID points to what you expect.
+
+## Full example: CPI chart data
+
+```ts
+import { StatCanClient, StatCanApiError } from '@varve/statcan-wds';
+
+const client = new StatCanClient();
+
+async function getCpiHistory(months: number) {
+  // Confirm what we're fetching
+  const [metaResult] = await client.getSeriesInfoFromVector([{ vectorId: 41690973 }]);
+  if (typeof metaResult.object === 'string') throw new Error('Series not found');
+  const meta = metaResult.object;
+  console.log(`Fetching: ${meta.SeriesTitleEn}`);
+
+  // Fetch data
+  const [dataResult] = await client.getDataFromVectorsAndLatestNPeriods([
+    { vectorId: 41690973, latestN: months },
+  ]);
+  if (typeof dataResult.object === 'string') throw new Error('No data returned');
+
+  const points = dataResult.object.vectorDataPoint
+    .filter((dp) => dp.value !== null)
+    .map((dp) => ({
+      period: dp.refPer,
+      value: dp.value! * Math.pow(10, dp.scalarFactorCode),
+      released: dp.releaseTime,
+    }));
+
+  return { title: meta.SeriesTitleEn, points };
+}
+
+getCpiHistory(36).then(({ title, points }) => {
+  console.log(title);
+  for (const p of points) {
+    console.log(`  ${p.period}: ${p.value.toFixed(1)}`);
+  }
+});
+```
+
+## Bulk data by release date
+
+If you need all data released within a specific date-time window (rather than by reference period), use `getBulkVectorDataByRange`. This is suited for reconciliation jobs where you want to capture all revisions published between two timestamps:
+
+```ts
+const results = await client.getBulkVectorDataByRange(
+  ['v41690973', 'v2062811'],
+  '2024-11-01T00:00',
+  '2024-11-30T23:59',
+);
+```
+
+Note that the vector IDs here are passed as strings with the `v` prefix, and the date-time format is `'YYYY-MM-DDTHH:mm'`.

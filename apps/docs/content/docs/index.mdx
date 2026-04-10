@@ -1,0 +1,55 @@
+---
+title: Introduction
+description: Open source TypeScript clients for Statistics Canada and UK ONS APIs.
+---
+
+The `@varve` SDK collection provides isomorphic, Zod-validated TypeScript clients for government statistical data APIs that are complex to work with directly. Each package wraps the underlying REST API into a clean, typed interface that works the same way in Node.js, modern browsers, and Cloudflare Workers.
+
+## Packages
+
+<Cards>
+  <Card title="@varve/statcan-wds" href="/docs/statcan-wds">
+    Statistics Canada Web Data Service — time series data, table metadata, and release monitoring.
+  </Card>
+  <Card title="@varve/statcan-rdaas" href="/docs/statcan-rdaas">
+    Statistics Canada Reference Data as a Service — classifications, concordances, and index lookups.
+  </Card>
+  <Card title="@varve/ons-api" href="/docs/ons-api">
+    UK Office for National Statistics API — timeseries, datasets, observations, and filtered exports.
+  </Card>
+</Cards>
+
+## Why these packages exist
+
+The underlying APIs are well-documented in places but inconsistent in practice. Response shapes differ from the official specs, some fields are undocumented, and error codes are reused for unrelated conditions. These packages encode that real-world behaviour into their Zod schemas so you don't have to discover it yourself.
+
+Key properties shared across all three clients:
+
+- **Runtime validation** — every response is parsed by a Zod schema. If the API changes its shape, you find out immediately with a clear parse error rather than a silent `undefined` deep in your application.
+- **Automatic retry** — network errors and transient server errors (409, 429, 500) are retried with exponential backoff. StatCan's WDS API routinely returns 409 when a table is being updated; this is handled transparently.
+- **Zero runtime dependencies beyond Zod** — no fetch polyfills, no Node.js-specific modules. Zod is a required peer dependency so you can share schemas with your own application code.
+
+## Installation
+
+Each package is independent — install only what you need:
+
+```bash
+# Statistics Canada time series data
+npm install @varve/statcan-wds zod
+
+# Statistics Canada classifications and concordances
+npm install @varve/statcan-rdaas zod
+
+# UK Office for National Statistics
+npm install @varve/ons-api zod
+```
+
+All three can be installed together:
+
+```bash
+npm install @varve/statcan-wds @varve/statcan-rdaas @varve/ons-api zod
+```
+
+## A note on the APIs
+
+These SDKs are built against production endpoints and reflect observed API behaviour rather than documentation. The READMEs for each package document known discrepancies between the official specs and what the APIs actually return.

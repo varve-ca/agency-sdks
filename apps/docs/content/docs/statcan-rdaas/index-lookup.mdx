@@ -1,0 +1,259 @@
+---
+title: "Look up codes from plain-English terms"
+description: Use a classification's alphabetic index to find the correct code for a business description, occupational title, or product category — and verify it against the exclusion list.
+---
+
+Every classification in RDaaS includes an **alphabetic index** — a searchable list of plain-English terms, each mapped to the code it belongs to. This is the authoritative lookup tool for questions like "what NAICS code applies to custom software development?" or "is residential renovation classified under construction?"
+
+Each index entry has:
+- `primaryTerm` — the main heading (e.g. "Software publishers")
+- `illustrativeExamples[]` — specific examples that belong to this code
+- `inclusions[]` — terms explicitly included in scope
+- `otherExamples[]` — additional examples, often more specific
+- `indexCodeValue` — the code these terms map to
+- `indexCodeDescriptor` — the code's label
+
+## Step 1 — Load all index entries
+
+Get the classification ID first (see [Find and browse classifications](/docs/statcan-rdaas/find-classifications)), then load the full index:
+
+```ts
+import { RDaaSClient } from '@varve/statcan-rdaas';
+
+const client = new RDaaSClient();
+
+// Assume we already have the NAICS 2022 classification ID
+const classificationId = 'lQA3IRH1ER3KXwrJ'; // extracted from @id URI
+
+const { '@graph': indexEntries } = await client.getClassificationIndexes(classificationId);
+
+console.log(`Index contains ${indexEntries.length} entries`);
+
+// Peek at the first entry
+const first = indexEntries[0];
+console.log(`Primary term: ${first.primaryTerm}`);
+console.log(`Code: ${first.indexCodeValue} — ${first.indexCodeDescriptor}`);
+console.log(`Examples: ${first.illustrativeExamples.join(', ')}`);
+```
+
+## Step 2 — Search the index for a keyword
+
+The API does not provide server-side full-text search over the index. Load the full index once, then search in memory. A single NAICS index contains a few thousand entries — well within a comfortable in-memory footprint.
+
+```ts
+import type { IndexEntry } from '@varve/statcan-rdaas';
+
+function searchIndex(entries: IndexEntry[], keyword: string): IndexEntry[] {
+  const q = keyword.toLowerCase();
+
+  return entries.filter(entry => {
+    // Check all text fields
+    if (entry.primaryTerm.toLowerCase().includes(q)) return true;
+    if (entry.illustrativeExamples.some(ex => ex.toLowerCase().includes(q))) return true;
+    if (entry.inclusions.some(inc => inc.toLowerCase().includes(q))) return true;
+    if (entry.otherExamples.some(ex => ex.toLowerCase().includes(q))) return true;
+    return false;
+  });
+}
+
+const matches = searchIndex(indexEntries, 'software');
+
+console.log(`Found ${matches.length} index entries matching "software"`);
+
+for (const entry of matches) {
+  console.log(`\n${entry.primaryTerm}`);
+  console.log(`  → ${entry.indexCodeValue} — ${entry.indexCodeDescriptor}`);
+  if (entry.illustrativeExamples.length > 0) {
+    console.log(`  Examples: ${entry.illustrativeExamples.slice(0, 3).join('; ')}`);
+  }
+}
+```
+
+## Step 3 — Retrieve a single index entry
+
+If you have an `indexId` and want to fetch just that one entry:
+
+```ts
+const entry = await client.getClassificationIndex(classificationId, indexEntries[0].indexId);
+
+// Note: unlike getClassificationIndexes, this returns the entry as a flat object
+// — not wrapped in a { '@graph': [...] } container
+console.log(entry.primaryTerm);
+console.log(entry.indexCodeValue);
+```
+
+<Callout>
+`getClassificationIndex` returns a flat object directly. `getClassificationIndexes` returns `{ '@graph': IndexEntry[] }`. Destructure accordingly — don't expect the single-entry response to have a `'@graph'` wrapper.
+</Callout>
+
+## Step 4 — Check exclusions for a candidate code
+
+Once you have a candidate code, verify it against the classification's exclusion list. Exclusions document terms that might seem to belong to a code but are explicitly assigned elsewhere:
+
+```ts
+const { '@graph': exclusions } = await client.getClassificationExclusions(classificationId);
+
+// Filter exclusions relevant to a specific code
+function getExclusionsForCode(code: string) {
+  return exclusions.filter(ex => ex.sourceCodeValue === code);
+}
+
+const codeExclusions = getExclusionsForCode('5415');
+
+if (codeExclusions.length > 0) {
+  console.log(`\nExclusions for code 5415:`);
+  for (const ex of codeExclusions) {
+    console.log(`  "${ex.term}" is excluded → goes to ${ex.targetCodeValue}`);
+  }
+}
+```
+
+An exclusion entry like `{ term: 'packaged software publishing', sourceCodeValue: '5415', targetCodeValue: '5112' }` means that while 5415 covers custom software development, packaged software publishers belong to 5112, not 5415.
+
+## Complete example — classify a business description
+
+```ts
+import { RDaaSClient, RDaaSApiError } from '@varve/statcan-rdaas';
+import type { IndexEntry } from '@varve/statcan-rdaas';
+
+interface ClassificationMatch {
+  code: string;
+  descriptor: string;
+  matchedOn: string;
+  primaryTerm: string;
+  indexId: number;
+}
+
+async function classifyBusinessDescription(description: string): Promise<ClassificationMatch[]> {
+  const client = new RDaaSClient();
+
+  // 1. Find NAICS 2022
+  const search = await client.searchClassifications({
+    q: 'NAICS 2022',
+    status: 'RELEASED',
+    limit: 1,
+  });
+
+  if (search.found === 0) throw new Error('NAICS 2022 not found');
+  const id = search.results['@graph'][0]['@id'].split('/').pop()!;
+
+  // 2. Load the index
+  const { '@graph': indexEntries } = await client.getClassificationIndexes(id);
+
+  // 3. Search all text fields
+  const q = description.toLowerCase();
+  const matches: ClassificationMatch[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of indexEntries) {
+    const allTerms = [
+      { text: entry.primaryTerm, field: 'primaryTerm' },
+      ...entry.illustrativeExamples.map(t => ({ text: t, field: 'illustrativeExample' })),
+      ...entry.inclusions.map(t => ({ text: t, field: 'inclusion' })),
+      ...entry.otherExamples.map(t => ({ text: t, field: 'otherExample' })),
+    ];
+
+    for (const { text, field } of allTerms) {
+      if (text.toLowerCase().includes(q)) {
+        const key = `${entry.indexCodeValue}:${entry.indexId}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          matches.push({
+            code: entry.indexCodeValue,
+            descriptor: entry.indexCodeDescriptor,
+            matchedOn: `${field}: "${text}"`,
+            primaryTerm: entry.primaryTerm,
+            indexId: entry.indexId,
+          });
+        }
+        break; // one match per entry is enough
+      }
+    }
+  }
+
+  // 4. Load exclusions and annotate results
+  const { '@graph': exclusions } = await client.getClassificationExclusions(id);
+  const exclusionsByCode = new Map<string, string[]>();
+  for (const ex of exclusions) {
+    const list = exclusionsByCode.get(ex.sourceCodeValue) ?? [];
+    list.push(`"${ex.term}" → ${ex.targetCodeValue}`);
+    exclusionsByCode.set(ex.sourceCodeValue, list);
+  }
+
+  return matches;
+}
+
+// Usage
+async function main() {
+  try {
+    const description = 'software';
+    const matches = await classifyBusinessDescription(description);
+
+    console.log(`Results for "${description}" — ${matches.length} match(es):\n`);
+
+    for (const m of matches.slice(0, 5)) {
+      console.log(`${m.code} — ${m.descriptor}`);
+      console.log(`  Index entry: ${m.primaryTerm}`);
+      console.log(`  Matched on: ${m.matchedOn}`);
+    }
+
+    if (matches.length > 5) {
+      console.log(`\n... and ${matches.length - 5} more.`);
+    }
+  } catch (err) {
+    if (err instanceof RDaaSApiError) {
+      console.error(`API error ${err.status}: ${err.url}`);
+    }
+    process.exit(1);
+  }
+}
+
+main();
+```
+
+## Caching the index
+
+The classification index changes only when Statistics Canada releases a new classification version — typically every 5 years. In a production application, load and cache the index at startup rather than fetching it on every classification request:
+
+```ts
+import { RDaaSClient } from '@varve/statcan-rdaas';
+import type { IndexEntry } from '@varve/statcan-rdaas';
+
+class NaicsIndexer {
+  private client = new RDaaSClient();
+  private entries: IndexEntry[] | null = null;
+  private classificationId: string | null = null;
+
+  async load(classificationId: string): Promise<void> {
+    this.classificationId = classificationId;
+    const { '@graph': entries } = await this.client.getClassificationIndexes(classificationId);
+    this.entries = entries;
+    console.log(`Loaded ${entries.length} index entries`);
+  }
+
+  search(keyword: string): IndexEntry[] {
+    if (!this.entries) throw new Error('Index not loaded — call load() first');
+    const q = keyword.toLowerCase();
+    return this.entries.filter(e =>
+      e.primaryTerm.toLowerCase().includes(q) ||
+      e.illustrativeExamples.some(ex => ex.toLowerCase().includes(q)) ||
+      e.otherExamples.some(ex => ex.toLowerCase().includes(q)),
+    );
+  }
+
+  getEntry(indexId: number): IndexEntry | undefined {
+    return this.entries?.find(e => e.indexId === indexId);
+  }
+}
+
+// Initialise once at app startup
+const indexer = new NaicsIndexer();
+await indexer.load('lQA3IRH1ER3KXwrJ');
+
+// Then query repeatedly without additional API calls
+const results = indexer.search('custom software');
+```
+
+<Callout>
+If your application serves many concurrent classification requests, consider persisting the index to a cache (Redis, a database table, or a local JSON file) and refreshing it on a schedule rather than loading it into memory on every process start. The index for a major classification like NAICS is a few hundred kilobytes of JSON.
+</Callout>

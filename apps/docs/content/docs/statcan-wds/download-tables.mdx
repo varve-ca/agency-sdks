@@ -1,0 +1,262 @@
+---
+title: Download full tables
+description: Discover available StatCan tables, inspect their structure, and download complete CSVs for ETL pipelines or bulk analysis.
+---
+
+Fetching data vector-by-vector works well for dashboards and targeted queries, but it's impractical when you need an entire table loaded into a database or analysis tool. StatCan provides signed download URLs for complete table exports in CSV and SDMX format. This guide covers the discovery and download workflow.
+
+## Discover available tables
+
+`getAllCubesListLite` returns lightweight metadata for all ~6,000 published tables in a single call. Each entry includes the table title, date range, frequency, and archive status — enough to find what you need without fetching full metadata for every table.
+
+```ts
+import { StatCanClient } from '@varve/statcan-wds';
+
+const client = new StatCanClient();
+
+const tables = await client.getAllCubesListLite();
+console.log(`${tables.length} tables available`);
+```
+
+Each item has this shape:
+
+```ts
+interface CubeListLiteItem {
+  productId: number;
+  cubeTitleEn: string;
+  cubeTitleFr: string;
+  cubeStartDate: string;  // 'YYYY-MM-DD'
+  cubeEndDate: string;
+  releaseTime: string;
+  archived: boolean;
+  frequencyCode: number;  // 1=Annual, 4=Quarterly, 6=Monthly, etc.
+}
+```
+
+### Filter by title or subject
+
+```ts
+// Find all active monthly CPI tables
+const cpiTables = tables.filter(
+  (t) =>
+    !t.archived &&
+    t.frequencyCode === 6 &&
+    t.cubeTitleEn.toLowerCase().includes('consumer price index'),
+);
+
+for (const t of cpiTables) {
+  console.log(`${t.productId}: ${t.cubeTitleEn} (${t.cubeStartDate} – ${t.cubeEndDate})`);
+}
+```
+
+```ts
+// Find all active annual tables related to GDP
+const gdpTables = tables.filter(
+  (t) => !t.archived && t.frequencyCode === 1 && t.cubeTitleEn.toLowerCase().includes('gdp'),
+);
+```
+
+<Callout>
+`getAllCubesListLite` returns all tables in a single response. The payload is large (~1–2 MB). Cache the result at application startup or in your build pipeline rather than calling it on every request.
+</Callout>
+
+## Inspect table structure before downloading
+
+Before downloading a large table, use `getCubeMetadata` to understand its dimensions, size, and release timing.
+
+```ts
+// Inspect the CPI table (18-10-0004-01)
+const metaResults = await client.getCubeMetadata([18100004]);
+const meta = metaResults[0];
+
+if (typeof meta.object === 'string') {
+  throw new Error(`Metadata not available: ${meta.object}`);
+}
+
+const {
+  cubeTitleEn,
+  cubeStartDate,
+  cubeEndDate,
+  frequencyCode,
+  nbSeriesCube,
+  nbDatapointsCube,
+  releaseTime,
+  dimension,
+} = meta.object;
+
+console.log(`${cubeTitleEn}`);
+console.log(`  ${nbSeriesCube} series, ${nbDatapointsCube} datapoints`);
+console.log(`  Coverage: ${cubeStartDate} to ${cubeEndDate}`);
+console.log(`  Next release: ${releaseTime}`);
+console.log(`  Dimensions:`);
+for (const dim of dimension) {
+  console.log(`    [${dim.dimensionPositionId}] ${dim.dimensionNameEn}`);
+}
+```
+
+The `dimension` array tells you how the coordinate system is structured. Each dimension lists its member codes — which is what you'd use to construct a coordinate string for `getDataFromCubePidCoordAndLatestNPeriods`.
+
+You can fetch metadata for multiple tables in one call:
+
+```ts
+const metas = await client.getCubeMetadata([18100004, 14100287, 36100104]);
+```
+
+## Download a full table as CSV
+
+`getFullTableDownloadCSV` returns a signed URL pointing to a zip archive. The zip contains one or more CSV files with the complete table data and a separate metadata file.
+
+```ts
+const response = await client.getFullTableDownloadCSV(18100004, 'en');
+
+if (typeof response.object !== 'string') {
+  throw new Error('Unexpected response shape');
+}
+
+const downloadUrl = response.object;
+console.log('Download URL:', downloadUrl);
+// e.g. https://www150.statcan.gc.ca/t1/tbl1/en/dtbl/18100004.zip?...
+```
+
+<Callout type="warn">
+The returned URL is a signed, time-limited link. Download the zip immediately after receiving the URL — do not store the URL for later use.
+</Callout>
+
+### Download and extract in Node.js
+
+The zip contains CSV files. Here's a complete Node.js example using the built-in `fetch` and a stream-based unzip library:
+
+```ts
+import { StatCanClient } from '@varve/statcan-wds';
+import { createWriteStream } from 'node:fs';
+import { pipeline } from 'node:stream/promises';
+
+const client = new StatCanClient();
+
+async function downloadTable(productId: number, outputPath: string): Promise<void> {
+  // 1. Get the signed download URL
+  const response = await client.getFullTableDownloadCSV(productId, 'en');
+  if (typeof response.object !== 'string') {
+    throw new Error('Failed to get download URL');
+  }
+
+  // 2. Stream the zip to disk
+  const res = await fetch(response.object);
+  if (!res.ok || !res.body) {
+    throw new Error(`Download failed: ${res.status}`);
+  }
+
+  const dest = createWriteStream(outputPath);
+  await pipeline(res.body as unknown as NodeJS.ReadableStream, dest);
+  console.log(`Saved to ${outputPath}`);
+}
+
+// Download the CPI table
+await downloadTable(18100004, '/tmp/18100004.zip');
+```
+
+To extract the CSV in memory without writing the zip to disk, use a library like `unzipper` or `yauzl`:
+
+```ts
+import unzipper from 'unzipper';
+import { Readable } from 'node:stream';
+
+async function downloadAndParseCsv(productId: number): Promise<string> {
+  const response = await client.getFullTableDownloadCSV(productId, 'en');
+  if (typeof response.object !== 'string') throw new Error('No URL');
+
+  const res = await fetch(response.object);
+  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const zip = await unzipper.Open.buffer(buffer);
+
+  // The main data file is named <productId>.csv
+  const csvEntry = zip.files.find((f) => f.path.endsWith(`${productId}.csv`));
+  if (!csvEntry) throw new Error('CSV not found in zip');
+
+  const content = await csvEntry.buffer();
+  return content.toString('utf-8');
+}
+```
+
+## Download as SDMX
+
+`getFullTableDownloadSDMX` returns a URL to an SDMX-ML file, which is the standard format for statistical data exchange. Use this if your downstream tooling (e.g. SDMX-compatible databases, R's `rsdmx`, Python's `pandaSDMX`) consumes SDMX natively.
+
+```ts
+const sdmxResponse = await client.getFullTableDownloadSDMX(18100004);
+if (typeof sdmxResponse.object === 'string') {
+  console.log('SDMX URL:', sdmxResponse.object);
+}
+```
+
+### CSV vs SDMX
+
+<Tabs items={['CSV', 'SDMX']}>
+<Tab value="CSV">
+Choose CSV when:
+- You're loading into a database (PostgreSQL, SQLite, DuckDB)
+- You're using pandas, R `data.frame`, or similar tabular tools
+- You need the fastest parse time — CSV is simpler to process
+- You want bilingual output (the zip includes both English and French files)
+
+The CSV format matches StatCan's web download format and includes a header row with dimension names.
+</Tab>
+<Tab value="SDMX">
+Choose SDMX when:
+- Your tooling has native SDMX support
+- You need the hierarchical dimension structure preserved in the format
+- You're exchanging data with other statistical organisations
+- You need codes and labels in a single structured document
+
+SDMX files are larger and more complex to parse without a dedicated library.
+</Tab>
+</Tabs>
+
+## Putting it together: ETL pipeline
+
+```ts
+import { StatCanClient, StatCanApiError } from '@varve/statcan-wds';
+
+const client = new StatCanClient();
+
+async function etlPipeline(targetProductIds: number[]): Promise<void> {
+  // 1. Verify all tables exist and get their metadata
+  const metas = await client.getCubeMetadata(targetProductIds);
+
+  for (let i = 0; i < metas.length; i++) {
+    const meta = metas[i];
+    const productId = targetProductIds[i];
+
+    if (typeof meta.object === 'string') {
+      console.warn(`Table ${productId} not available: ${meta.object}`);
+      continue;
+    }
+
+    const { cubeTitleEn, nbDatapointsCube } = meta.object;
+    console.log(`Processing: ${cubeTitleEn} (${nbDatapointsCube} datapoints)`);
+
+    // 2. Download and process each table
+    try {
+      const urlResponse = await client.getFullTableDownloadCSV(productId, 'en');
+      if (typeof urlResponse.object !== 'string') continue;
+
+      const res = await fetch(urlResponse.object);
+      if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+
+      const buffer = await res.arrayBuffer();
+      // ... unzip and load into your database
+      console.log(`  Downloaded ${buffer.byteLength} bytes`);
+    } catch (err) {
+      if (err instanceof StatCanApiError) {
+        console.error(`  API error for ${productId}: ${err.message}`);
+      } else {
+        throw err;
+      }
+    }
+  }
+}
+
+await etlPipeline([18100004, 14100287, 36100104]);
+```

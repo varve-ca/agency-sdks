@@ -1,0 +1,321 @@
+---
+title: Explore topics and datasets
+description: Navigate the ONS topic hierarchy to discover dataset IDs, inspect dimension structure, and find the right version to query — without knowing anything upfront.
+---
+
+If you know you need "population statistics by region" or "labour market data broken down by age" but don't know the dataset ID, start here. This guide walks through the ONS topic tree from top-level navigation down to dataset dimensions and available option values.
+
+## The discovery hierarchy
+
+ONS organises its content in two parallel structures you can navigate:
+
+**Topic tree** — a hierarchical taxonomy (Economy → Prices → Consumer price inflation). Use `getNavigation`, `getTopics`, `getTopic`, and `getTopicSubtopics` to walk it, then `getTopicContent` to list datasets and timeseries within a leaf topic.
+
+**Dataset catalogue** — a flat list of all published datasets with pagination. Use `getDatasets` when you want to browse everything, or `getDataset` when you already have an ID.
+
+Once you have a dataset ID, navigate its edition → version → dimensions hierarchy to understand its structure before querying data.
+
+## Step 1: Get the top-level navigation
+
+`getNavigation` returns the root topic tree — the same structure that powers the ONS website's main navigation. Each item has a `slug` and optional `subtopics`.
+
+```ts
+import { OnsClient } from '@varve/ons-api';
+
+const client = new OnsClient();
+
+const nav = await client.getNavigation();
+
+for (const item of nav.items) {
+  console.log(`${item.label}  (slug: ${item.slug})`);
+  if (item.subtopics) {
+    for (const sub of item.subtopics) {
+      console.log(`  └─ ${sub.label}  (slug: ${sub.slug})`);
+    }
+  }
+}
+// Economy  (slug: economy)
+//   └─ Prices  (slug: prices)
+//   └─ National accounts  (slug: nationalaccounts)
+// People, population and community  (slug: peoplepopulationandcommunity)
+//   └─ Population and migration  (slug: populationandmigration)
+// ...
+```
+
+## Step 2: Drill into topics
+
+`getTopics` returns the full list of top-level topics. Each `Topic` has an `id` you can use with `getTopic` and `getTopicSubtopics`.
+
+```ts
+const { items: topics } = await client.getTopics();
+
+// Find the Economy topic
+const economy = topics.find((t) => t.slug === 'economy');
+if (!economy) throw new Error('Economy topic not found');
+
+console.log(`Topic: ${economy.title} (id: ${economy.id})`);
+```
+
+Navigate to subtopics using `getTopicSubtopics`:
+
+```ts
+const { items: subtopics } = await client.getTopicSubtopics(economy.id);
+
+for (const sub of subtopics) {
+  console.log(`  ${sub.title}  (id: ${sub.id}, slug: ${sub.slug})`);
+}
+// Prices  (id: 1834, slug: prices)
+// National accounts  (id: 1805, slug: nationalaccounts)
+// ...
+```
+
+## Step 3: List content within a topic
+
+`getTopicContent` returns the datasets and timeseries published under a topic. Each item includes a `type` field (`'dataset'` or `'timeseries'`) and a `links` object pointing to the resource.
+
+```ts
+// Find the Prices sub-topic
+const prices = subtopics.find((t) => t.slug === 'prices');
+if (!prices) throw new Error('Prices sub-topic not found');
+
+const { items: content } = await client.getTopicContent(prices.id);
+
+for (const item of content) {
+  console.log(`[${item.type}] ${item.title}`);
+}
+// [dataset] Consumer Prices Index including owner occupiers' housing costs (CPIH)
+// [timeseries] CPIH Annual Rate
+// ...
+```
+
+## Step 4: Browse datasets directly
+
+When you want to explore all available datasets rather than navigating by topic, use `getDatasets`. It supports pagination via `limit` and `offset`.
+
+```ts
+const page1 = await client.getDatasets({ limit: 20, offset: 0 });
+
+console.log(`Total datasets: ${page1.total_count}`);
+for (const ds of page1.items) {
+  console.log(`${ds.id}  ${ds.title}`);
+  console.log(`  Updated: ${ds.last_updated}`);
+}
+
+// Paginate through all datasets
+async function* allDatasets(client: OnsClient) {
+  let offset = 0;
+  const limit = 100;
+  while (true) {
+    const page = await client.getDatasets({ limit, offset });
+    yield* page.items;
+    offset += limit;
+    if (offset >= page.total_count) break;
+  }
+}
+```
+
+Inspect a single dataset by ID:
+
+```ts
+const cpih = await client.getDataset('cpih01');
+
+console.log(cpih.title);
+console.log(`Frequency: ${cpih.release_frequency}`);
+console.log(`Next release: ${cpih.next_release}`);
+console.log(`National statistic: ${cpih.national_statistic}`);
+```
+
+## Step 5: Navigate editions and versions
+
+Datasets are versioned. You must select an edition and version to query data. Most datasets have a single edition (typically named `'time-series'`), and the latest version is what you want for current data.
+
+```ts
+// List editions for cpih01
+const { items: editions } = await client.getDatasetEditions('cpih01');
+console.log(editions.map((e) => e.edition));
+// ['time-series']
+
+// List versions within an edition
+const { items: versions } = await client.getDatasetVersions('cpih01', 'time-series');
+
+// Sort descending by version number to find the latest
+const latest = versions.sort((a, b) => b.version - a.version)[0];
+console.log(`Latest version: ${latest.version} (released: ${latest.release_date})`);
+console.log(`Dimensions: ${latest.dimensions.map((d) => d.name).join(', ')}`);
+// Dimensions: aggregate, geography, time
+```
+
+<Callout>
+Always retrieve the version list rather than hardcoding a version number. Versions increment with each release and the current version number will change as ONS publishes updates.
+</Callout>
+
+## Step 6: Inspect dimensions
+
+`getDatasetDimensions` returns the full list of dimensions for a specific dataset version. Each dimension has a `name`, `label`, and `description`.
+
+```ts
+const { items: dimensions } = await client.getDatasetDimensions(
+  'cpih01',
+  'time-series',
+  latest.version
+);
+
+for (const dim of dimensions) {
+  console.log(`${dim.name}: ${dim.label}`);
+  console.log(`  ${dim.description}`);
+}
+// aggregate: Aggregate
+//   The CPIH classification of goods and services
+// geography: Geography
+//   The geographic area the observation relates to
+// time: Time
+//   The time period the observation relates to
+```
+
+## Step 7: List available dimension options
+
+Before querying observations or creating a filter, you need to know what values are valid for each dimension. `getDatasetDimensionOptions` returns all available option codes and labels.
+
+```ts
+// What geography codes are available?
+const { items: geoOptions } = await client.getDatasetDimensionOptions(
+  'cpih01',
+  'time-series',
+  latest.version,
+  'geography'
+);
+
+for (const opt of geoOptions) {
+  console.log(`${opt.option}  ${opt.label}`);
+}
+// K02000001  United Kingdom
+// E92000001  England
+// W92000004  Wales
+// S92000003  Scotland
+// N92000002  Northern Ireland
+```
+
+```ts
+// What aggregates (product categories) are available?
+const { items: aggOptions } = await client.getDatasetDimensionOptions(
+  'cpih01',
+  'time-series',
+  latest.version,
+  'aggregate'
+);
+
+// Filter to top-level categories
+const topLevel = aggOptions.filter((o) => o.label.startsWith('CPIH'));
+for (const opt of topLevel.slice(0, 5)) {
+  console.log(`${opt.option}  ${opt.label}`);
+}
+```
+
+## Complete walkthrough: CPIH dataset discovery
+
+Starting from navigation, arriving at geography dimension options.
+
+```ts
+import { OnsClient, OnsApiError } from '@varve/ons-api';
+
+const client = new OnsClient();
+
+async function exploreCpih() {
+  // 1. Find Economy in the topic tree
+  const { items: topics } = await client.getTopics();
+  const economy = topics.find((t) => t.slug === 'economy');
+  if (!economy) throw new Error('Economy topic not found');
+
+  // 2. Find Prices sub-topic
+  const { items: subtopics } = await client.getTopicSubtopics(economy.id);
+  const prices = subtopics.find((t) => t.slug === 'prices');
+  if (!prices) throw new Error('Prices sub-topic not found');
+
+  // 3. Find the CPIH dataset in topic content
+  const { items: content } = await client.getTopicContent(prices.id);
+  const cpihContent = content.find(
+    (item) => item.type === 'dataset' && item.title.includes('CPIH')
+  );
+  if (!cpihContent) throw new Error('CPIH dataset not found in topic content');
+  console.log(`Found: ${cpihContent.title}`);
+
+  // 4. Fetch the dataset directly by known ID
+  //    (In practice you'd extract the ID from cpihContent.links)
+  const dataset = await client.getDataset('cpih01');
+  console.log(`Dataset ID: ${dataset.id}`);
+  console.log(`Release frequency: ${dataset.release_frequency}`);
+  console.log(`Next release: ${dataset.next_release}`);
+
+  // 5. Get the latest version
+  const { items: versions } = await client.getDatasetVersions('cpih01', 'time-series');
+  const latestVersion = versions.sort((a, b) => b.version - a.version)[0];
+  console.log(`\nLatest version: ${latestVersion.version}`);
+  console.log(`Dimensions: ${latestVersion.dimensions.map((d) => d.name).join(', ')}`);
+
+  // 6. Inspect dimensions
+  const { items: dims } = await client.getDatasetDimensions(
+    'cpih01',
+    'time-series',
+    latestVersion.version
+  );
+  console.log('\nDimension details:');
+  for (const dim of dims) {
+    console.log(`  ${dim.name}: ${dim.label}`);
+  }
+
+  // 7. List available geography options
+  const { items: geoOptions } = await client.getDatasetDimensionOptions(
+    'cpih01',
+    'time-series',
+    latestVersion.version,
+    'geography'
+  );
+
+  console.log('\nAvailable geographies:');
+  for (const opt of geoOptions) {
+    console.log(`  ${opt.option}  ${opt.label}`);
+  }
+
+  return {
+    datasetId: dataset.id,
+    version: latestVersion.version,
+    edition: 'time-series',
+    geographies: geoOptions,
+    dimensions: dims,
+  };
+}
+
+try {
+  const info = await exploreCpih();
+  console.log('\nReady to query — use this in getObservations or createFilter:');
+  console.log(
+    `  client.getObservations('${info.datasetId}', '${info.edition}', ${info.version}, { ... })`
+  );
+} catch (err) {
+  if (err instanceof OnsApiError) {
+    console.error(`ONS API error ${err.status}: ${err.url}`);
+  }
+  throw err;
+}
+```
+
+## Working with code lists
+
+Some datasets reference ONS code lists — classification reference data that maps option codes to labels and hierarchies. The `getCodeLists`, `getCodeList`, and related methods let you inspect these:
+
+```ts
+// List all available code lists
+const { items: codeLists } = await client.getCodeLists();
+
+// Get all editions of a specific code list
+const { items: editions } = await client.getCodeListEditions('cpih1dim1aggid');
+
+// Get all codes within an edition
+const { items: codes } = await client.getCodes('cpih1dim1aggid', 'one-off');
+
+for (const code of codes.slice(0, 5)) {
+  console.log(`${code.id}  ${code.label}`);
+}
+```
+
+Code list data is useful when you need human-readable labels for dimension option codes, or when building UI components that let users select dimension values.
