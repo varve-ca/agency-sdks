@@ -1,0 +1,59 @@
+name: Test @varve/ons-api
+
+on:
+  schedule:
+    - cron: '0 9 * * 1' # Every Monday at 9am UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: packages/ons-api
+        run: npm install
+
+      - name: Run integration tests
+        working-directory: packages/ons-api
+        run: |
+          set +e
+          npx tsx tests/integration.test.ts > test-output.txt 2>&1
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+        id: tests
+
+      - name: Print test output
+        if: always()
+        run: cat packages/ons-api/test-output.txt
+
+      - name: Update status.json
+        if: always()
+        run: |
+          node .github/scripts/update-status.js \
+            ons-api \
+            packages/ons-api/test-output.txt \
+            ${{ steps.tests.outputs.exit_code || '1' }} \
+            ${{ github.run_id }}
+
+      - name: Commit status
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/status.json
+          git diff --staged --quiet || git commit -m "chore: update ons-api status [skip ci]"
+          git push
+
+      - name: Fail if tests failed
+        if: steps.tests.outputs.exit_code != '0'
+        run: exit 1

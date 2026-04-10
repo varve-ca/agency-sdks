@@ -1,5 +1,8 @@
 # @varve/statcan-wds
 
+[![Test @varve/statcan-wds](https://github.com/varve-ca/agency-sdks/actions/workflows/test-statcan-wds.yml/badge.svg)](https://github.com/varve-ca/agency-sdks/actions/workflows/test-statcan-wds.yml)
+[![npm](https://img.shields.io/npm/v/@varve/statcan-wds)](https://www.npmjs.com/package/@varve/statcan-wds)
+
 An isomorphic, Zod-validated TypeScript client for the Statistics Canada Web Data Service (WDS) API.
 
 ## Features

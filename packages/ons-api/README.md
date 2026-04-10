@@ -1,5 +1,8 @@
 # @varve/ons-api
 
+[![Test @varve/ons-api](https://github.com/varve-ca/agency-sdks/actions/workflows/test-ons-api.yml/badge.svg)](https://github.com/varve-ca/agency-sdks/actions/workflows/test-ons-api.yml)
+[![npm](https://img.shields.io/npm/v/@varve/ons-api)](https://www.npmjs.com/package/@varve/ons-api)
+
 An isomorphic, Zod-validated TypeScript client for the [UK Office for National Statistics (ONS) API](https://developer.ons.gov.uk/).
 
 Works in Node.js 18+ and modern browsers. All responses are parsed at runtime with [Zod](https://zod.dev) so your types reflect the actual shape of the data.
