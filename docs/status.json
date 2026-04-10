@@ -1,12 +1,45 @@
 {
   "ons-api": {
-    "status": "unknown",
-    "last_checked": null,
-    "total": 0,
-    "passed": 0,
+    "status": "passing",
+    "last_checked": "2026-04-10T05:39:55.398Z",
+    "total": 38,
+    "passed": 38,
     "failed": 0,
-    "run_url": null,
-    "sections": {}
+    "run_url": "https://github.com/varve-ca/agency-sdks/actions/runs/24228313453",
+    "sections": {
+      "Search API": {
+        "passed": 7,
+        "failed": 0
+      },
+      "Data API": {
+        "passed": 4,
+        "failed": 0
+      },
+      "Code Lists API": {
+        "passed": 7,
+        "failed": 0
+      },
+      "Datasets API": {
+        "passed": 9,
+        "failed": 0
+      },
+      "Observations API": {
+        "passed": 2,
+        "failed": 0
+      },
+      "Filters API": {
+        "passed": 3,
+        "failed": 0
+      },
+      "Topics API": {
+        "passed": 5,
+        "failed": 0
+      },
+      "Error Handling": {
+        "passed": 1,
+        "failed": 0
+      }
+    }
   },
   "statcan-wds": {
     "status": "unknown",
