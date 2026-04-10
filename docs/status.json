@@ -114,5 +114,14 @@
         "failed": 0
       }
     }
+  },
+  "statcan-rdaas": {
+    "status": "unknown",
+    "last_checked": null,
+    "total": 0,
+    "passed": 0,
+    "failed": 0,
+    "run_url": null,
+    "sections": {}
   }
 }

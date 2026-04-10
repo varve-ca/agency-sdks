@@ -1,7 +1,7 @@
 {
-  "name": "@varve/statcan-wds",
+  "name": "@varve/statcan-rdaas",
   "version": "0.1.0",
-  "description": "An isomorphic, Zod-validated TypeScript client for the Statistics Canada Web Data Service (WDS) API.",
+  "description": "An isomorphic, Zod-validated TypeScript client for the Statistics Canada Reference Data as a Service (RDaaS) API.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
   "types": "dist/index.d.ts",
@@ -15,9 +15,9 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/varve-ca/agency-sdks.git",
-    "directory": "packages/statcan-wds"
+    "directory": "packages/statcan-rdaas"
   },
-  "homepage": "https://github.com/varve-ca/agency-sdks/tree/main/packages/statcan-wds#readme",
+  "homepage": "https://github.com/varve-ca/agency-sdks/tree/main/packages/statcan-rdaas#readme",
   "bugs": {
     "url": "https://github.com/varve-ca/agency-sdks/issues"
   },
@@ -31,9 +31,9 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "build": "tsup",
     "prepublishOnly": "npm run build",
-    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "dev": "tsup --watch",
     "test": "npm run test:unit",
     "test:unit": "vitest run src",
     "test:integration": "tsx tests/integration.test.ts",
@@ -44,7 +44,6 @@
   },
   "devDependencies": {
     "msw": "^2.7.0",
-    "tinyglobby": "^0.2.16",
     "tsup": "^8.3.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
@@ -58,7 +57,10 @@
     "statcan",
     "statistics",
     "canada",
-    "wds",
+    "rdaas",
+    "reference-data",
+    "classifications",
+    "concordances",
     "api",
     "sdk",
     "typescript",
