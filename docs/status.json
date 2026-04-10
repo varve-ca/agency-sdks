@@ -42,20 +42,20 @@
     }
   },
   "statcan-wds": {
-    "status": "failing",
-    "last_checked": "2026-04-10T05:42:20.579Z",
+    "status": "passing",
+    "last_checked": "2026-04-10T05:53:16.542Z",
     "total": 16,
-    "passed": 12,
-    "failed": 4,
-    "run_url": "https://github.com/varve-ca/agency-sdks/actions/runs/24228375632",
+    "passed": 16,
+    "failed": 0,
+    "run_url": "https://github.com/varve-ca/agency-sdks/actions/runs/24228684676",
     "sections": {
       "getChangedSeriesList": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getChangedCubeList": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getCubeMetadata": {
         "passed": 1,
@@ -78,12 +78,12 @@
         "failed": 0
       },
       "getChangedSeriesDataFromCubePidCoord": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getChangedSeriesDataFromVector": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getDataFromCubePidCoordAndLatestNPeriods": {
         "passed": 1,
