@@ -2,14 +2,14 @@
 
 Isomorphic, Zod-validated TypeScript clients for government statistical APIs. Each package targets a specific agency API, ships CJS + ESM bundles with full TypeScript declarations, and validates every response at runtime so your types reflect the actual shape of the data.
 
-**Live API status:** [varve-ca.github.io/agency-sdks](https://varve-ca.github.io/agency-sdks)
+**Live API status:** [open.varve.ca/agency-sdks/status](https://open.varve.ca/agency-sdks/status)
 
 ## Packages
 
-| Package | Description | Status |
-|---|---|---|
-| [`@varve/ons-api`](packages/ons-api) | UK Office for National Statistics API | [![Test @varve/ons-api](https://github.com/varve-ca/agency-sdks/actions/workflows/test-ons-api.yml/badge.svg)](https://github.com/varve-ca/agency-sdks/actions/workflows/test-ons-api.yml) |
-| [`@varve/statcan-wds`](packages/statcan-wds) | Statistics Canada Web Data Service | [![Test @varve/statcan-wds](https://github.com/varve-ca/agency-sdks/actions/workflows/test-statcan-wds.yml/badge.svg)](https://github.com/varve-ca/agency-sdks/actions/workflows/test-statcan-wds.yml) |
+| Package                                          | Description                                   | Status                                                                                                                                                                                                       |
+| ------------------------------------------------ | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`@varve/ons-api`](packages/ons-api)             | UK Office for National Statistics API         | [![Test @varve/ons-api](https://github.com/varve-ca/agency-sdks/actions/workflows/test-ons-api.yml/badge.svg)](https://github.com/varve-ca/agency-sdks/actions/workflows/test-ons-api.yml)                   |
+| [`@varve/statcan-wds`](packages/statcan-wds)     | Statistics Canada Web Data Service            | [![Test @varve/statcan-wds](https://github.com/varve-ca/agency-sdks/actions/workflows/test-statcan-wds.yml/badge.svg)](https://github.com/varve-ca/agency-sdks/actions/workflows/test-statcan-wds.yml)       |
 | [`@varve/statcan-rdaas`](packages/statcan-rdaas) | Statistics Canada Reference Data as a Service | [![Test @varve/statcan-rdaas](https://github.com/varve-ca/agency-sdks/actions/workflows/test-statcan-rdaas.yml/badge.svg)](https://github.com/varve-ca/agency-sdks/actions/workflows/test-statcan-rdaas.yml) |
 
 Each package has its own README with installation instructions, a full API reference, and notes on any discrepancies between the official documentation and the live API behaviour.
