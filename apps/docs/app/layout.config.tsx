@@ -11,12 +11,12 @@ export const baseOptions: BaseLayoutProps = {
   links: [
     {
       text: "Documentation",
-      url: "/agency-sdks/docs",
+      url: "/docs",
       active: "nested-url",
     },
     {
       text: "Status",
-      url: "/agency-sdks/status",
+      url: "/status",
     },
     {
       text: "GitHub",
@@ -25,7 +25,7 @@ export const baseOptions: BaseLayoutProps = {
     },
     {
       text: "npm",
-      url: "https://www.npmjs.com/search?q=%40varve",
+      url: "https://www.npmjs.com/org/varve",
       external: true,
     },
   ],
