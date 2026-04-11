@@ -7,7 +7,7 @@ const packages = [
     title: 'Web Data Service',
     description:
       'Time series vectors, table metadata, and release monitoring. Full coverage of all 16 WDS endpoints with automated 409/500 retry handling.',
-    href: '/docs/statcan-wds',
+    href: '/agency-sdks/docs/statcan-wds',
   },
   {
     name: '@varve/statcan-rdaas',
@@ -15,7 +15,7 @@ const packages = [
     title: 'Reference Data as a Service',
     description:
       'Industry and occupation classifications (NAICS/NOC), hierarchical code trees, plain-English index search, and version concordances.',
-    href: '/docs/statcan-rdaas',
+    href: '/agency-sdks/docs/statcan-rdaas',
   },
   {
     name: '@varve/ons-api',
@@ -23,7 +23,7 @@ const packages = [
     title: 'ONS API',
     description:
       'Economic and demographic timeseries by CDID, dataset topic navigation, observation querying, and filtered CSV/XLS data extracts.',
-    href: '/docs/ons-api',
+    href: '/agency-sdks/docs/ons-api',
   },
 ];
 
@@ -45,7 +45,7 @@ export default function HomePage() {
           </p>
           <div className="flex gap-4 pt-4 text-sm">
             <Link
-              href="/docs"
+              href="/agency-sdks/docs"
               className="font-medium text-fd-primary hover:underline"
             >
               Getting Started →

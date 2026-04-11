@@ -5,6 +5,7 @@ const withMDX = createMDX();
 /** @type {import('next').NextConfig} */
 const config = {
   reactStrictMode: true,
+  basePath: '/agency-sdks',
   outputFileTracingRoot: new URL('../../', import.meta.url).pathname,
 };
 

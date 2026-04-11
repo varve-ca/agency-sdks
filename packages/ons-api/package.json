@@ -1,6 +1,6 @@
 {
   "name": "@varve/ons-api",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "An isomorphic, Zod-validated TypeScript client for the UK Office for National Statistics (ONS) API.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -17,7 +17,7 @@
     "url": "https://github.com/varve-ca/agency-sdks.git",
     "directory": "packages/ons-api"
   },
-  "homepage": "https://github.com/varve-ca/agency-sdks/tree/main/packages/ons-api#readme",
+  "homepage": "https://open.varve.ca/agency-sdks/docs/ons-api",
   "bugs": {
     "url": "https://github.com/varve-ca/agency-sdks/issues"
   },

@@ -2,6 +2,12 @@
   "name": "@varve/agency-sdks",
   "private": true,
   "workspaces": [
-    "packages/*"
-  ]
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "docs:dev": "npm run dev -w @varve/docs",
+    "docs:build": "npm run build -w @varve/docs",
+    "docs:start": "npm run start -w @varve/docs"
+  }
 }
