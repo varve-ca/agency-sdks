@@ -117,11 +117,11 @@
   },
   "statcan-rdaas": {
     "status": "passing",
-    "last_checked": "2026-04-10T21:59:54.808Z",
+    "last_checked": "2026-04-13T11:59:14.786Z",
     "total": 12,
     "passed": 12,
     "failed": 0,
-    "run_url": "https://github.com/varve-ca/agency-sdks/actions/runs/24266115550",
+    "run_url": "https://github.com/varve-ca/agency-sdks/actions/runs/24342131536",
     "sections": {
       "searchClassifications": {
         "passed": 1,
