@@ -555,6 +555,7 @@ export interface FilterCreateParams {
 export interface OnsClientOptions {
   baseUrl?: string;
   maxRetries?: number;
+  timeoutMs?: number;
 }
 
 const USER_AGENT = '@varve/ons-api/0.1.0 (varve +https://varve.ca)';
@@ -562,17 +563,27 @@ const USER_AGENT = '@varve/ons-api/0.1.0 (varve +https://varve.ca)';
 export class OnsClient {
   private baseUrl: string;
   private maxRetries: number;
+  private timeoutMs: number;
 
   constructor(options: OnsClientOptions = {}) {
     this.baseUrl = options.baseUrl ?? 'https://api.beta.ons.gov.uk/v1';
     this.maxRetries = options.maxRetries ?? 2;
+    this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
   private async fetchWithRetry(url: string, retries = this.maxRetries, init: RequestInit = {}): Promise<Response> {
-    const res = await fetch(url, {
-      ...init,
-      headers: { 'User-Agent': USER_AGENT, ...init.headers },
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        ...init,
+        signal: controller.signal,
+        headers: { 'User-Agent': USER_AGENT, ...init.headers },
+      });
+    } finally {
+      clearTimeout(timer);
+    }
     if (!res.ok && res.status === 429 && retries > 0) {
       const retryAfter = res.headers.get('Retry-After');
       const delay = retryAfter ? parseInt(retryAfter) * 1000 : 2000;

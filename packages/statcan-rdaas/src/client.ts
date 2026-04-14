@@ -298,6 +298,7 @@ export interface LangParams {
 export interface RDaaSClientOptions {
   baseUrl?: string;
   maxRetries?: number;
+  timeoutMs?: number;
 }
 
 const USER_AGENT = '@varve/statcan-rdaas/0.1.0 (varve +https://varve.ca)';
@@ -305,10 +306,12 @@ const USER_AGENT = '@varve/statcan-rdaas/0.1.0 (varve +https://varve.ca)';
 export class RDaaSClient {
   private baseUrl: string;
   private maxRetries: number;
+  private timeoutMs: number;
 
   constructor(options: RDaaSClientOptions = {}) {
     this.baseUrl = options.baseUrl ?? 'https://api.statcan.gc.ca/rdaas';
     this.maxRetries = options.maxRetries ?? 2;
+    this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
   private async fetchWithRetry(
@@ -317,10 +320,19 @@ export class RDaaSClient {
     retries = this.maxRetries
   ): Promise<Response> {
     try {
-      return await fetch(url, {
-        ...options,
-        headers: { 'User-Agent': USER_AGENT, ...options.headers },
-      });
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          ...options,
+          signal: controller.signal,
+          headers: { 'User-Agent': USER_AGENT, ...options.headers },
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+      return res;
     } catch (err) {
       if (retries > 0) {
         await new Promise(resolve => setTimeout(resolve, 2000));

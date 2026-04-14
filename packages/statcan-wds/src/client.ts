@@ -198,20 +198,30 @@ export type SeriesInfo = z.infer<typeof SeriesInfoSchema>;
 export interface StatCanClientOptions {
   baseUrl?: string;
   maxRetries?: number;
+  timeoutMs?: number;
 }
 
 export class StatCanClient {
   private baseUrl: string;
   private maxRetries: number;
+  private timeoutMs: number;
 
   constructor(options: StatCanClientOptions = {}) {
     this.baseUrl = options.baseUrl || 'https://www150.statcan.gc.ca/t1/wds/rest';
     this.maxRetries = options.maxRetries ?? 2;
+    this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
   private async fetchWithRetry(url: string, options: RequestInit = {}, retries = this.maxRetries): Promise<Response> {
     try {
-      const res = await fetch(url, options);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+      let res: Response;
+      try {
+        res = await fetch(url, { ...options, signal: controller.signal });
+      } finally {
+        clearTimeout(timer);
+      }
       if (!res.ok && res.status === 409 && retries > 0) {
         await new Promise(resolve => setTimeout(resolve, 2000));
         return this.fetchWithRetry(url, options, retries - 1);

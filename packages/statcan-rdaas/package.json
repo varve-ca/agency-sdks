@@ -1,6 +1,6 @@
 {
   "name": "@varve/statcan-rdaas",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "An isomorphic, Zod-validated TypeScript client for the Statistics Canada Reference Data as a Service (RDaaS) API.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
