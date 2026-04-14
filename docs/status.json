@@ -42,16 +42,16 @@
     }
   },
   "statcan-wds": {
-    "status": "failing",
-    "last_checked": "2026-04-14T03:20:54.671Z",
+    "status": "passing",
+    "last_checked": "2026-04-14T04:12:20.234Z",
     "total": 16,
-    "passed": 15,
-    "failed": 1,
-    "run_url": "https://github.com/varve-ca/agency-sdks/actions/runs/24379053480",
+    "passed": 16,
+    "failed": 0,
+    "run_url": "https://github.com/varve-ca/agency-sdks/actions/runs/24380532754",
     "sections": {
       "getChangedSeriesList": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getChangedCubeList": {
         "passed": 1,
