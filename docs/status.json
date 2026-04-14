@@ -43,75 +43,75 @@
   },
   "statcan-wds": {
     "status": "failing",
-    "last_checked": "2026-04-13T11:31:41.698Z",
+    "last_checked": "2026-04-14T03:20:54.671Z",
     "total": 16,
-    "passed": 0,
-    "failed": 16,
-    "run_url": "https://github.com/varve-ca/agency-sdks/actions/runs/24340665775",
+    "passed": 15,
+    "failed": 1,
+    "run_url": "https://github.com/varve-ca/agency-sdks/actions/runs/24379053480",
     "sections": {
       "getChangedSeriesList": {
         "passed": 0,
         "failed": 1
       },
       "getChangedCubeList": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getCubeMetadata": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getSeriesInfoFromCubePidCoord": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getSeriesInfoFromVector": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getAllCubesList": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getAllCubesListLite": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getChangedSeriesDataFromCubePidCoord": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getChangedSeriesDataFromVector": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getDataFromCubePidCoordAndLatestNPeriods": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getDataFromVectorsAndLatestNPeriods": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getBulkVectorDataByRange": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getDataFromVectorByReferencePeriodRange": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getFullTableDownloadCSV": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getFullTableDownloadSDMX": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       },
       "getCodeSets": {
-        "passed": 0,
-        "failed": 1
+        "passed": 1,
+        "failed": 0
       }
     }
   },
