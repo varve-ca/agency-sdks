@@ -1,7 +1,15 @@
 import { z } from 'zod';
 
 // --- Error Handling ---
-export class StatCanApiError extends Error {
+
+export class StatCanError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StatCanError';
+  }
+}
+
+export class StatCanApiError extends StatCanError {
   constructor(
     public status: number,
     public url: string,
@@ -10,6 +18,34 @@ export class StatCanApiError extends Error {
   ) {
     super(message);
     this.name = 'StatCanApiError';
+  }
+}
+
+export class AgencyResponseError extends StatCanApiError {
+  constructor(status: number, url: string, body: string, message: string) {
+    super(status, url, body, message);
+    this.name = 'AgencyResponseError';
+  }
+}
+
+export class InvalidCoordinateError extends StatCanApiError {
+  constructor(status: number, url: string, body: string, message: string) {
+    super(status, url, body, message);
+    this.name = 'InvalidCoordinateError';
+  }
+}
+
+export class AgencyInternalError extends StatCanApiError {
+  constructor(status: number, url: string, body: string, message: string) {
+    super(status, url, body, message);
+    this.name = 'AgencyInternalError';
+  }
+}
+
+export class SuppressedDataError extends StatCanError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SuppressedDataError';
   }
 }
 
@@ -54,7 +90,7 @@ export const FootnoteSchema = z.object({
 export const TableMetadataSchema = z.object({
   responseStatusCode: z.number(),
   productId: z.string(),
-  cansimId: z.string().optional(),
+  cansimId: z.string().nullable().optional(),
   cubeTitleEn: z.string(),
   cubeTitleFr: z.string(),
   cubeStartDate: z.string(),
@@ -62,7 +98,7 @@ export const TableMetadataSchema = z.object({
   frequencyCode: z.number(),
   nbSeriesCube: z.number(),
   nbDatapointsCube: z.number(),
-  releaseTime: z.string(),
+  releaseTime: z.string().nullable().optional(),
   archiveStatusCode: z.string(),
   archiveStatusEn: z.string(),
   archiveStatusFr: z.string(),
@@ -86,7 +122,7 @@ export const GetCubeMetadataResponseSchema = z.array(
 export const DatapointSchema = z.object({
   refPer: z.string(),
   refPer2: z.string().optional(),
-  refPerRaw: z.string().optional(),
+  refPerRaw: z.string().nullable().optional(),
   refPerRaw2: z.string().optional(),
   value: z.number().nullable().optional(),
   decimals: z.number(),
@@ -94,7 +130,7 @@ export const DatapointSchema = z.object({
   symbolCode: z.number(),
   statusCode: z.number(),
   securityLevelCode: z.number(),
-  releaseTime: z.string(),
+  releaseTime: z.string().nullable().optional(),
   frequencyCode: z.number(),
 });
 
@@ -118,7 +154,7 @@ export const ChangedSeriesSchema = z.object({
   productId: z.number(),
   coordinate: z.string(),
   vectorId: z.number(),
-  releaseTime: z.string()
+  releaseTime: z.string().nullable().optional()
 });
 
 export const GetChangedSeriesListResponseSchema = z.object({
@@ -129,7 +165,7 @@ export const GetChangedSeriesListResponseSchema = z.object({
 export const ChangedCubeSchema = z.object({
   responseStatusCode: z.number(),
   productId: z.number(),
-  releaseTime: z.string()
+  releaseTime: z.string().nullable().optional()
 });
 
 export const GetChangedCubeListResponseSchema = z.object({
@@ -145,9 +181,9 @@ export const SeriesInfoSchema = z.object({
   frequencyCode: z.number(),
   scalarFactorCode: z.number(),
   decimals: z.number(),
-  terminated: z.number(),
-  SeriesTitleEn: z.string(),
-  SeriesTitleFr: z.string(),
+  terminated: z.number().nullable().optional(),
+  SeriesTitleEn: z.string().nullable().optional(),
+  SeriesTitleFr: z.string().nullable().optional(),
   memberUomCode: z.number().nullable().optional()
 });
 
@@ -165,7 +201,7 @@ export const CubeListLiteItemSchema = z.object({
   cubeTitleFr: z.string(),
   cubeStartDate: z.string(),
   cubeEndDate: z.string(),
-  releaseTime: z.string(),
+  releaseTime: z.string().nullable().optional(),
   archived: z.string(),
   subjectCode: z.array(z.string()).nullable().optional(),
   surveyCode: z.array(z.string()).nullable().optional(),
@@ -236,6 +272,50 @@ export class StatCanClient {
     }
   }
 
+  private async processResponse<T extends z.ZodTypeAny>(res: Response, url: string, schema: T): Promise<z.infer<T>> {
+    const contentType = res.headers.get('Content-Type') || '';
+    
+    if (!res.ok) {
+      const body = await res.text();
+      if (res.status === 500 && contentType.includes('text/html')) {
+        throw new AgencyInternalError(res.status, url, body, `StatCan Agency Internal Error (500 HTML): ${url}`);
+      }
+      if (res.status === 400) {
+        throw new InvalidCoordinateError(res.status, url, body, `StatCan API error: 400 Bad Request (likely Invalid Coordinate)`);
+      }
+      throw new StatCanApiError(res.status, url, body, `StatCan API error: ${res.status} ${res.statusText}`);
+    }
+
+    if (!contentType.includes('application/json')) {
+      const body = await res.text();
+      throw new AgencyResponseError(res.status, url, body, `Unexpected response content type: ${contentType}. Expected application/json.`);
+    }
+
+    let rawData: any;
+    try {
+      rawData = await res.json();
+    } catch (err: any) {
+      throw new AgencyResponseError(res.status, url, '', `Failed to parse JSON response: ${err.message}`);
+    }
+
+    // Check for "Response Code 1" (Invalid Coordinate) in common response structures
+    const checkResponseCode = (obj: any) => {
+      if (obj && typeof obj === 'object' && 'responseStatusCode' in obj && obj.responseStatusCode === 1) {
+        throw new InvalidCoordinateError(res.status, url, JSON.stringify(rawData), 'StatCan reported responseStatusCode: 1 (Invalid Coordinate/Product)');
+      }
+    };
+
+    if (Array.isArray(rawData)) {
+      for (const item of rawData) {
+        if (item.object) checkResponseCode(item.object);
+      }
+    } else if (rawData.object) {
+      checkResponseCode(rawData.object);
+    }
+
+    return schema.parse(rawData);
+  }
+
   private async post<T extends z.ZodTypeAny>(endpoint: string, payload: any, schema: T): Promise<z.infer<T>> {
     const url = `${this.baseUrl}${endpoint}`;
     const res = await this.fetchWithRetry(url, {
@@ -244,13 +324,7 @@ export class StatCanClient {
       body: JSON.stringify(payload),
     });
 
-    if (!res.ok) {
-      const body = await res.text();
-      throw new StatCanApiError(res.status, url, body, `StatCan API error: ${res.status} ${res.statusText}`);
-    }
-
-    const rawData = await res.json();
-    return schema.parse(rawData);
+    return this.processResponse(res, url, schema);
   }
 
   private async get<T extends z.ZodTypeAny>(endpoint: string, schema: T): Promise<z.infer<T>> {
@@ -259,13 +333,18 @@ export class StatCanClient {
       method: 'GET',
     });
 
-    if (!res.ok) {
-      const body = await res.text();
-      throw new StatCanApiError(res.status, url, body, `StatCan API error: ${res.status} ${res.statusText}`);
-    }
+    return this.processResponse(res, url, schema);
+  }
 
-    const rawData = await res.json();
-    return schema.parse(rawData);
+  private validateDataResponse(data: z.infer<typeof GetDataResponseSchema>) {
+    for (const item of data) {
+      if (item.status === 'SUCCESS' && item.object && typeof item.object !== 'string') {
+        if (item.object.vectorDataPoint.length === 0) {
+          throw new SuppressedDataError(`Series ${item.object.vectorId} (coordinate ${item.object.coordinate}) exists but contains no data points.`);
+        }
+      }
+    }
+    return data;
   }
 
   // --- 1. Product Change Listings ---
@@ -304,27 +383,32 @@ export class StatCanClient {
   // --- 3. Data Access ---
 
   async getChangedSeriesDataFromCubePidCoord(requests: { productId: number; coordinate: string }[]) {
-    return this.post('/getChangedSeriesDataFromCubePidCoord', requests, GetDataResponseSchema);
+    const res = await this.post('/getChangedSeriesDataFromCubePidCoord', requests, GetDataResponseSchema);
+    return this.validateDataResponse(res);
   }
 
   async getChangedSeriesDataFromVector(requests: { vectorId: number }[]) {
-    return this.post('/getChangedSeriesDataFromVector', requests, GetDataResponseSchema);
+    const res = await this.post('/getChangedSeriesDataFromVector', requests, GetDataResponseSchema);
+    return this.validateDataResponse(res);
   }
 
   async getDataFromCubePidCoordAndLatestNPeriods(requests: { productId: number; coordinate: string; latestN: number }[]) {
-    return this.post('/getDataFromCubePidCoordAndLatestNPeriods', requests, GetDataResponseSchema);
+    const res = await this.post('/getDataFromCubePidCoordAndLatestNPeriods', requests, GetDataResponseSchema);
+    return this.validateDataResponse(res);
   }
 
   async getDataFromVectorsAndLatestNPeriods(requests: { vectorId: number; latestN: number }[]) {
-    return this.post('/getDataFromVectorsAndLatestNPeriods', requests, GetDataResponseSchema);
+    const res = await this.post('/getDataFromVectorsAndLatestNPeriods', requests, GetDataResponseSchema);
+    return this.validateDataResponse(res);
   }
 
   async getBulkVectorDataByRange(vectorIds: string[], startDataPointReleaseDate: string, endDataPointReleaseDate: string) {
-    return this.post('/getBulkVectorDataByRange', {
+    const res = await this.post('/getBulkVectorDataByRange', {
       vectorIds,
       startDataPointReleaseDate,
       endDataPointReleaseDate
     }, GetDataResponseSchema);
+    return this.validateDataResponse(res);
   }
 
   async getDataFromVectorByReferencePeriodRange(vectorIds: number | number[], startRefPeriod?: string, endReferencePeriod?: string) {
@@ -333,7 +417,8 @@ export class StatCanClient {
     params.append('vectorIds', ids);
     if (startRefPeriod) params.append('startRefPeriod', startRefPeriod);
     if (endReferencePeriod) params.append('endReferencePeriod', endReferencePeriod);
-    return this.get(`/getDataFromVectorByReferencePeriodRange?${params.toString()}`, GetDataResponseSchema);
+    const res = await this.get(`/getDataFromVectorByReferencePeriodRange?${params.toString()}`, GetDataResponseSchema);
+    return this.validateDataResponse(res);
   }
 
   async getFullTableDownloadCSV(productId: number, language: 'en' | 'fr') {

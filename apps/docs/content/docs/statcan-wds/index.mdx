@@ -53,9 +53,15 @@ If you know the `productId` but not the coordinate, retrieve the cube's metadata
 
 **409 retries** — The WDS API returns HTTP 409 when a table is being updated or processed. This is a transient state, not an application error. The client retries 409 responses with exponential backoff (default `maxRetries: 2`).
 
-**404/409 on changed-data endpoints** — `getChangedCubeList` and `getChangedSeriesList` return 404 or 409 when called outside a release window (i.e. no data was published on that date). This is documented API behaviour, not an error. The client normalises these into a successful response with a string message in the `object` field rather than throwing.
+**Pragmatic Zod validation** — Every response is parsed against a schema. While we maintain type safety, the schemas are designed to be resilient to StatCan's inconsistent use of `null` and `optional` fields (e.g. for suppressed metadata or Census edge cases). If a field is missing or `null` in the API response, it is safely surfaced to your code rather than causing a crash.
 
-**Zod validation** — Every response is parsed against a schema. Field types, optional fields, and nested structures are all validated. If StatCan changes a response shape, you get an explicit parse error immediately rather than a silent `undefined` somewhere downstream.
+**Error Categorization** — The client wraps raw HTTP errors into specific, actionable classes:
+- **`InvalidCoordinateError`**: Thrown for 400 errors or when the agency reports "Response Code 1" (invalid product/coordinate).
+- **`AgencyInternalError`**: Specifically handles 500 HTML error pages returned by the agency.
+- **`SuppressedDataError`**: Thrown when a series exists but contains no data points.
+- **`AgencyResponseError`**: Thrown for non-JSON responses or malformed data.
+
+**404/409 on changed-data endpoints** — `getChangedCubeList` and `getChangedSeriesList` return 404 or 409 when called outside a release window (i.e. no data was published on that date). This is documented API behaviour, not an error. The client normalises these into a successful response with a string message in the `object` field rather than throwing.
 
 **Batch requests** — Methods that accept arrays (e.g. `getDataFromVectorsAndLatestNPeriods`) send all IDs in a single HTTP request and return a parallel array of results, one per input.
 

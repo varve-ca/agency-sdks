@@ -6,7 +6,8 @@
 An isomorphic, Zod-validated TypeScript client for the Statistics Canada Web Data Service (WDS) API.
 
 ## Features
-- **Strict Validation:** Every API response is validated at runtime using `zod`. Undocumented `null` values or schema changes fail fast.
+- **Pragmatic Validation:** Every API response is validated at runtime using `zod`. While we maintain strict typing, schemas are permissive regarding `null` and `optional` fields to handle StatCan's inconsistent real-world data (e.g., suppressed metadata or Census edge cases).
+- **Defensive Parsing:** Specifically detects non-JSON responses (HTML error pages) and categorizes them into actionable error classes rather than crashing on generic syntax errors.
 - **Resilient:** Built-in exponential backoff and retry logic handles the government's infamous `409 Conflict` (table updating) and `500 Internal Server` errors gracefully.
 - **Isomorphic:** Works in Node.js, Next.js, Cloudflare Workers, and modern browsers.
 - **Complete Coverage:** Supports all 16 data access and metadata endpoints documented in the official WDS specification.
@@ -46,19 +47,28 @@ main();
 
 ## Error Handling
 
-The client throws a custom `StatCanApiError` when the server returns a non-200 response (after exhausting retries). You can catch this to inspect the exact HTTP status and the raw response body.
+The client uses a hierarchy of specific error classes to help you handle StatCan's various failure modes:
+
+| Error Class | Trigger |
+| ----------- | ------- |
+| `InvalidCoordinateError` | Thrown for 400 status codes or when the API returns "Response Code 1". |
+| `AgencyInternalError` | Thrown when the agency returns a 500 HTML error page. |
+| `AgencyResponseError` | Thrown for non-JSON content types or malformed JSON. |
+| `SuppressedDataError` | Thrown when a series is requested but the API returns zero data points (suppressed data). |
+| `StatCanApiError` | Generic catch-all for other non-200 API responses. |
 
 ```typescript
-import { StatCanClient, StatCanApiError } from '@varve/statcan-wds';
+import { StatCanClient, InvalidCoordinateError, SuppressedDataError } from '@varve/statcan-wds';
 
 const client = new StatCanClient();
 
 try {
-  await client.getCubeMetadata([99999999]); 
+  const data = await client.getDataFromVectorsAndLatestNPeriods([{ vectorId: 999, latestN: 1 }]);
 } catch (error) {
-  if (error instanceof StatCanApiError) {
-    console.error(`Failed with status: ${error.status}`);
-    console.error(`Raw response: ${error.body}`);
+  if (error instanceof InvalidCoordinateError) {
+    console.error("The requested vector ID or coordinate does not exist.");
+  } else if (error instanceof SuppressedDataError) {
+    console.error("The series exists but is currently suppressed (no data points).");
   }
 }
 ```

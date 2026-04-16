@@ -2,17 +2,26 @@ import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest
 import { setupServer } from 'msw/node';
 import { http, HttpResponse, delay } from 'msw';
 import { z } from 'zod';
-import { StatCanClient, StatCanApiError } from './client';
+import { 
+  StatCanClient, 
+  StatCanApiError, 
+  AgencyInternalError, 
+  AgencyResponseError, 
+  InvalidCoordinateError, 
+  SuppressedDataError 
+} from './client';
 
 const handlers = [
   http.post('https://www150.statcan.gc.ca/t1/wds/rest/getCubeMetadata', async ({ request }) => {
     const payload = await request.json();
+    // Return nulls to test schema relaxation
     return HttpResponse.json([
       {
         status: 'SUCCESS',
         object: {
           responseStatusCode: 0,
           productId: '35100003',
+          cansimId: null,
           cubeTitleEn: 'Test Cube',
           cubeTitleFr: 'Test Cube Fr',
           cubeStartDate: '1997-01-01',
@@ -20,13 +29,63 @@ const handlers = [
           frequencyCode: 12,
           nbSeriesCube: 174,
           nbDatapointsCube: 4476,
-          releaseTime: '2025-09-23T08:30',
+          releaseTime: null,
           archiveStatusCode: '2',
           archiveStatusEn: 'CURRENT',
           archiveStatusFr: 'ACTIF',
           subjectCode: ['4211'],
           surveyCode: ['3313'],
           dimension: []
+        }
+      }
+    ]);
+  }),
+
+  // HTML Error Page (500)
+  http.get('https://www150.statcan.gc.ca/t1/wds/rest/500-html', () => {
+    return new HttpResponse('<html><body>Internal Server Error</body></html>', {
+      status: 500,
+      headers: { 'Content-Type': 'text/html' }
+    });
+  }),
+
+  // Non-JSON Response (200 but HTML)
+  http.get('https://www150.statcan.gc.ca/t1/wds/rest/200-html', () => {
+    return new HttpResponse('<html><body>OK but HTML</body></html>', {
+      status: 200,
+      headers: { 'Content-Type': 'text/html' }
+    });
+  }),
+
+  // Invalid Coordinate (responseStatusCode: 1)
+  http.post('https://www150.statcan.gc.ca/t1/wds/rest/invalid-coord', () => {
+    return HttpResponse.json([
+      {
+        status: 'SUCCESS',
+        object: {
+          responseStatusCode: 1,
+          productId: 12345
+        }
+      }
+    ]);
+  }),
+
+  // 400 Bad Request
+  http.get('https://www150.statcan.gc.ca/t1/wds/rest/400-error', () => {
+    return new HttpResponse('Bad Request', { status: 400 });
+  }),
+
+  // Suppressed Data
+  http.post('https://www150.statcan.gc.ca/t1/wds/rest/getDataFromVectorsAndLatestNPeriods', () => {
+    return HttpResponse.json([
+      {
+        status: 'SUCCESS',
+        object: {
+          responseStatusCode: 0,
+          productId: 12345,
+          coordinate: '1.1.1',
+          vectorId: 999,
+          vectorDataPoint: []
         }
       }
     ]);
@@ -92,6 +151,74 @@ describe('StatCanClient', () => {
       expect(err).toBeInstanceOf(StatCanApiError);
       expect(err.status).toBe(500);
       expect(err.message).toContain('StatCan API error: 500');
+    }
+  });
+
+  it('throws AgencyInternalError for 500 HTML responses', async () => {
+    const client = new StatCanClient({ maxRetries: 0 });
+    try {
+      // @ts-expect-error
+      await client.get('/500-html', z.any());
+      expect.fail('Should have thrown');
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(AgencyInternalError);
+      expect(err.status).toBe(500);
+    }
+  });
+
+  it('throws AgencyResponseError for non-JSON responses', async () => {
+    const client = new StatCanClient({ maxRetries: 0 });
+    try {
+      // @ts-expect-error
+      await client.get('/200-html', z.any());
+      expect.fail('Should have thrown');
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(AgencyResponseError);
+    }
+  });
+
+  it('throws InvalidCoordinateError when responseStatusCode is 1', async () => {
+    const client = new StatCanClient({ maxRetries: 0 });
+    try {
+      // @ts-expect-error
+      await client.post('/invalid-coord', {}, z.any());
+      expect.fail('Should have thrown');
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(InvalidCoordinateError);
+      expect(err.message).toContain('responseStatusCode: 1');
+    }
+  });
+
+  it('throws InvalidCoordinateError for 400 status codes', async () => {
+    const client = new StatCanClient({ maxRetries: 0 });
+    try {
+      // @ts-expect-error
+      await client.get('/400-error', z.any());
+      expect.fail('Should have thrown');
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(InvalidCoordinateError);
+      expect(err.status).toBe(400);
+    }
+  });
+
+  it('throws SuppressedDataError when no data points are returned', async () => {
+    const client = new StatCanClient({ maxRetries: 0 });
+    try {
+      await client.getDataFromVectorsAndLatestNPeriods([{ vectorId: 999, latestN: 1 }]);
+      expect.fail('Should have thrown');
+    } catch (err: any) {
+      expect(err).toBeInstanceOf(SuppressedDataError);
+      expect(err.message).toContain('exists but contains no data points');
+    }
+  });
+
+  it('successfully parses metadata with null values for releaseTime and cansimId', async () => {
+    const client = new StatCanClient({ maxRetries: 0 });
+    const data = await client.getCubeMetadata([35100003]);
+    expect(data[0].object).toBeDefined();
+    if (typeof data[0].object !== 'string') {
+      expect(data[0].object?.cansimId).toBeNull();
+      expect(data[0].object?.releaseTime).toBeNull();
     }
   });
 });
