@@ -1,6 +1,6 @@
 {
   "name": "@varve/statcan-wds",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "An isomorphic, Zod-validated TypeScript client for the Statistics Canada Web Data Service (WDS) API.",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

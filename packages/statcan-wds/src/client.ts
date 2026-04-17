@@ -109,7 +109,7 @@ export const TableMetadataSchema = z.object({
   correctionFootnote: z.array(z.unknown()).optional(),
   geoAttribute: z.array(z.unknown()).nullable().optional(),
   correction: z.array(z.unknown()).optional(),
-  issueDate: z.string().optional(),
+  issueDate: z.string().nullable().optional(),
 });
 
 export const GetCubeMetadataResponseSchema = z.array(
