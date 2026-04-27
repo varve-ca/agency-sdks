@@ -43,11 +43,11 @@
   },
   "statcan-wds": {
     "status": "failing",
-    "last_checked": "2026-04-26T06:53:33.594Z",
+    "last_checked": "2026-04-27T11:50:46.217Z",
     "total": 16,
     "passed": 13,
     "failed": 3,
-    "run_url": "https://github.com/varve-ca/agency-sdks/actions/runs/24950565121",
+    "run_url": "https://github.com/varve-ca/agency-sdks/actions/runs/24993304487",
     "sections": {
       "getChangedSeriesList": {
         "passed": 1,
